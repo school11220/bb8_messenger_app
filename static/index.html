@@ -406,203 +406,426 @@
                 <input id="register-password" type="password" placeholder="Password" required>
                 <button onclick="register()">Sign Up</button>
                 <p class="auth-toggle">Already have an account? <a onclick="toggleAuth('login')">Sign In</a></p>
-                <p id="register-error" class="error"></p>
-            </div>
-        </div>
-
-        <!-- Chat Screen -->
-        <div id="chat-screen">
-            <div id="users">
-                <h3 id="current-user-header">Online Users</h3>
-                <ul id="userList"></ul>
-            </div>
-            <div id="chat-window">
-                <div id="chat-header">
-                    <h3 id="chat-partner-name">Select a user</h3>
-                    <button id="clear-history-btn" onclick="clearChatHistory()">Clear History</button>
-                </div>
-                <div id="messages">
-                    <p id="welcome">Select a user to start chatting</p>
-                </div>
-                <div id="input-area">
-                    <input id="messageInput" type="text" placeholder="Type a message..." onkeydown="handleKey(event)">
-                    <button onclick="sendMessage()">Send</button>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <script>
-        const socket = io();
-        let username = null;
-        let currentRecipient = null;
-        const sharedKeys = {};
-
-        const byId = id => document.getElementById(id);
-
-        function xorCipher(text, key) {
-            if (!key) return "[DECRYPTION KEY MISSING]";
-            const keyBits = key.split("").map(Number);
-            const keyLen = keyBits.length;
-            try {
-                return text.split("").map((ch, i) =>
-                    String.fromCharCode(ch.charCodeAt(0) ^ keyBits[i % keyLen])
-                ).join("");
-            } catch (e) {
-                console.error("Cipher error:", e);
-                return "[DECRYPTION FAILED]";
-            }
-        }
-
-        function appendMessage(sender, message) {
-            const msgDiv = document.createElement("div");
-            msgDiv.classList.add("message");
-            msgDiv.classList.add(sender === username ? "sent" : "received");
-
-            const senderSpan = document.createElement("span");
-            senderSpan.className = "sender-name";
-            senderSpan.textContent = sender;
-
-            const msgContent = document.createElement("p");
-            msgContent.textContent = message;
-
-            msgDiv.appendChild(senderSpan);
-            msgDiv.appendChild(msgContent);
-            byId('messages').appendChild(msgDiv);
-            byId('messages').scrollTop = byId('messages').scrollHeight;
-        }
-
-        function startChatSession(user) {
-            username = user;
-            byId('current-user-header').textContent = `Online Users`;
-            byId('auth-screen').style.display = 'none';
-            byId('chat-screen').style.display = 'flex';
-            socket.emit("register_user", username);
-        }
-
-        function toggleAuth(mode) {
-            byId('login-box').style.display = mode === 'login' ? 'block' : 'none';
-            byId('register-box').style.display = mode === 'register' ? 'block' : 'none';
-            byId('login-error').textContent = '';
-            byId('register-error').textContent = '';
-        }
-
-        async function performAuth(endpoint, user, pass, errorEl) {
-            if (!user || !pass) {
-                errorEl.textContent = 'Please fill in all fields';
-                return;
-            }
-            const response = await fetch(endpoint, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ username: user, password: pass })
-            });
-            const data = await response.json();
-            if (data.success) {
-                startChatSession(user);
-            } else {
-                errorEl.textContent = data.error || 'Authentication failed';
-            }
-        }
-
-        function login() {
-            performAuth('/login', byId('login-username').value.trim(), byId('login-password').value.trim(), byId('login-error'));
-        }
-
-        function register() {
-            performAuth('/register', byId('register-username').value.trim(), byId('register-password').value.trim(), byId('register-error'));
-        }
-
-        function clearChatHistory() {
-            if (currentRecipient) {
-                if (confirm(`Clear all chat history with ${currentRecipient}?`)) {
-                    socket.emit("clear_history", { user1: username, user2: currentRecipient });
                 }
-            }
-        }
 
-        socket.on("update_users", users => {
-            const userList = byId('userList');
-            userList.innerHTML = "";
-            let recipientIsOnline = false;
+                #chat-header {
+                padding: 20px 24px;
+                background: white;
+                border-bottom: 1px solid #e2e8f0;
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                }
 
-            users.forEach(u => {
-                if (u === username) return;
-                if (u === currentRecipient) recipientIsOnline = true;
+                #chat-header h3 {
+                margin: 0;
+                font-size: 18px;
+                font-weight: 600;
+                color: #1a202c;
+                }
 
-                const li = document.createElement("li");
-                li.textContent = u;
-                if (u === currentRecipient) li.classList.add('active');
+                #clear-history-btn {
+                padding: 8px 16px;
+                background: #fc8181;
+                color: white;
+                border: none;
+                border-radius: 6px;
+                font-size: 13px;
+                font-weight: 500;
+                cursor: pointer;
+                transition: all 0.2s;
+                }
 
-                li.onclick = () => {
-                    if (currentRecipient === u) return;
-                    currentRecipient = u;
+                #clear-history-btn:hover {
+                background: #f56565;
+                }
 
-                    document.querySelectorAll('#userList li').forEach(item => item.classList.remove('active'));
-                    li.classList.add('active');
+                /* Messages */
+                #messages {
+                flex: 1;
+                padding: 24px;
+                overflow-y: auto;
+                background: #fafafa;
+                display: flex;
+                flex-direction: column;
+                gap: 12px;
+                }
 
-                    byId('chat-partner-name').textContent = `Chat with ${currentRecipient}`;
-                    byId('messages').innerHTML = "";
-                    byId('chat-window').style.display = "flex";
+                #messages::-webkit-scrollbar {
+                width: 6px;
+                }
 
-                    socket.emit("get_history", { user1: username, user2: currentRecipient });
-                };
-                userList.appendChild(li);
-            });
+                #messages::-webkit-scrollbar-thumb {
+                background: #cbd5e0;
+                border-radius: 3px;
+                }
 
-            if (!recipientIsOnline && currentRecipient) {
-                currentRecipient = null;
-                byId('chat-window').style.display = "none";
-            }
-        });
+                .message {
+                max-width: 65%;
+                padding: 12px 16px;
+                border-radius: 12px;
+                line-height: 1.5;
+                word-wrap: break-word;
+                animation: slideIn 0.3s ease;
+                }
 
-        socket.on("chat_history", data => {
-            const { history, key } = data;
-            sharedKeys[currentRecipient] = key;
-            byId('messages').innerHTML = "";
-            history.forEach(msg => appendMessage(msg.sender, msg.message));
-        });
+                @keyframes slideIn {
+                from {
+                opacity: 0;
+                transform: translateY(10px);
+                }
 
-        socket.on("history_cleared", () => {
-            byId('messages').innerHTML = "";
-        });
+                to {
+                opacity: 1;
+                transform: translateY(0);
+                }
+                }
 
-        socket.on("receive_message", data => {
-            const partner = data.sender === username ? currentRecipient : data.sender;
-            if (partner && data.key) {
-                sharedKeys[partner] = data.key;
-            }
+                .message.sent {
+                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                color: white;
+                align-self: flex-end;
+                border-bottom-right-radius: 4px;
+                }
 
-            let displayMsg = data.message;
-            if (data.sender !== username) {
-                const key = sharedKeys[data.sender];
-                displayMsg = xorCipher(data.message, key);
-            }
+                .message.received {
+                background: white;
+                color: #2d3748;
+                align-self: flex-start;
+                border-bottom-left-radius: 4px;
+                box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+                }
 
-            if (data.sender === currentRecipient || (data.sender === username && partner === currentRecipient)) {
-                appendMessage(data.sender, displayMsg);
-            }
-        });
+                .sender-name {
+                font-size: 11px;
+                font-weight: 600;
+                text-transform: uppercase;
+                letter-spacing: 0.5px;
+                margin-bottom: 4px;
+                display: block;
+                opacity: 0.8;
+                }
 
-        function sendMessage() {
-            const input = byId('messageInput');
-            const text = input.value.trim();
-            if (text && currentRecipient) {
-                socket.emit("send_message", {
-                    sender: username,
-                    recipient: currentRecipient,
-                    message: text
-                });
-                input.value = "";
-            }
-        }
+                .message p {
+                margin: 0;
+                }
 
-        function handleKey(event) {
-            if (event.key === 'Enter') {
-                sendMessage();
-            }
-        }
-    </script>
-</body>
+                #welcome {
+                text-align: center;
+                color: #a0aec0;
+                margin: auto;
+                font-size: 15px;
+                }
+
+                /* Input Area */
+                #input-area {
+                padding: 20px 24px;
+                background: white;
+                border-top: 1px solid #e2e8f0;
+                display: flex;
+                gap: 12px;
+                }
+
+                #input-area input {
+                flex: 1;
+                padding: 12px 18px;
+                border: 2px solid #e2e8f0;
+                border-radius: 24px;
+                font-size: 15px;
+                font-family: 'Inter', sans-serif;
+                transition: all 0.2s;
+                }
+
+                #input-area input:focus {
+                outline: none;
+                border-color: #667eea;
+                box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+                }
+
+                #input-area button {
+                padding: 12px 28px;
+                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                color: white;
+                border: none;
+                border-radius: 24px;
+                font-size: 15px;
+                font-weight: 600;
+                cursor: pointer;
+                transition: all 0.2s;
+                }
+
+                #input-area button:hover {
+                transform: translateY(-2px);
+                box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+                }
+
+                #input-area button:active {
+                transform: translateY(0);
+                }
+
+                /* Responsive */
+                @media (max-width: 768px) {
+                .container {
+                height: 100vh;
+                max-height: none;
+                border-radius: 0;
+                }
+
+                #users {
+                width: 100%;
+                max-height: 40vh;
+                }
+
+                #chat-screen {
+                flex-direction: column;
+                }
+                }
+                </style>
+                </head>
+
+                <body>
+                    <div class="container">
+                        <!-- Auth Screen -->
+                        <div id="auth-screen">
+                            <div id="login-box" class="auth-box">
+                                <h2>Welcome Back</h2>
+                                <input id="login-username" type="text" placeholder="Username" required>
+                                <input id="login-password" type="password" placeholder="Password" required>
+                                <button onclick="login()">Sign In</button>
+                                <p class="auth-toggle">Don't have an account? <a onclick="toggleAuth('register')">Sign
+                                        Up</a></p>
+                                <p id="login-error" class="error"></p>
+                            </div>
+                            <div id="register-box" class="auth-box" style="display: none;">
+                                <h2>Create Account</h2>
+                                <input id="register-username" type="text" placeholder="Username" required>
+                                <input id="register-password" type="password" placeholder="Password" required>
+                                <button onclick="register()">Sign Up</button>
+                                <p class="auth-toggle">Already have an account? <a onclick="toggleAuth('login')">Sign
+                                        In</a></p>
+                                <p id="register-error" class="error"></p>
+                            </div>
+                        </div>
+
+                        <!-- Chat Screen -->
+                        <div id="chat-screen">
+                            <div id="users">
+                                <h3 id="current-user-header">Online Users <span id="user-count">(0)</span></h3>
+                                <div id="connection-status"
+                                    style="padding: 5px 20px; font-size: 12px; color: #e53e3e; display: none;">
+                                    Disconnected</div>
+                                <ul id="userList"></ul>
+                            </div>
+                            <div id="chat-window">
+                                <div id="chat-header">
+                                    <h3 id="chat-partner-name">Select a user</h3>
+                                    <button id="clear-history-btn" onclick="clearChatHistory()">Clear History</button>
+                                </div>
+                                <div id="messages">
+                                    <p id="welcome">Select a user to start chatting</p>
+                                </div>
+                                <div id="input-area">
+                                    <input id="messageInput" type="text" placeholder="Type a message..."
+                                        onkeydown="handleKey(event)">
+                                    <button onclick="sendMessage()">Send</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <script>
+                        const socket = io();
+                        let username = null;
+                        let currentRecipient = null;
+                        const sharedKeys = {};
+
+                        const byId = id => document.getElementById(id);
+
+                        function xorCipher(text, key) {
+                            if (!key) return "[DECRYPTION KEY MISSING]";
+                            const keyBits = key.split("").map(Number);
+                            const keyLen = keyBits.length;
+                            try {
+                                return text.split("").map((ch, i) =>
+                                    String.fromCharCode(ch.charCodeAt(0) ^ keyBits[i % keyLen])
+                                ).join("");
+                            } catch (e) {
+                                console.error("Cipher error:", e);
+                                return "[DECRYPTION FAILED]";
+                            }
+                        }
+
+                        function appendMessage(sender, message) {
+                            const msgDiv = document.createElement("div");
+                            msgDiv.classList.add("message");
+                            msgDiv.classList.add(sender === username ? "sent" : "received");
+
+                            const senderSpan = document.createElement("span");
+                            senderSpan.className = "sender-name";
+                            senderSpan.textContent = sender;
+
+                            const msgContent = document.createElement("p");
+                            msgContent.textContent = message;
+
+                            msgDiv.appendChild(senderSpan);
+                            msgDiv.appendChild(msgContent);
+                            byId('messages').appendChild(msgDiv);
+                            byId('messages').scrollTop = byId('messages').scrollHeight;
+                        }
+
+                        function startChatSession(user) {
+                            username = user;
+                            byId('current-user-header').innerHTML = `Online Users <span id="user-count">(0)</span>`;
+                            byId('auth-screen').style.display = 'none';
+                            byId('chat-screen').style.display = 'flex';
+                            socket.emit("register_user", username);
+                        }
+
+                        function toggleAuth(mode) {
+                            byId('login-box').style.display = mode === 'login' ? 'block' : 'none';
+                            byId('register-box').style.display = mode === 'register' ? 'block' : 'none';
+                            byId('login-error').textContent = '';
+                            byId('register-error').textContent = '';
+                        }
+
+                        async function performAuth(endpoint, user, pass, errorEl) {
+                            if (!user || !pass) {
+                                errorEl.textContent = 'Please fill in all fields';
+                                return;
+                            }
+                            const response = await fetch(endpoint, {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ username: user, password: pass })
+                            });
+                            const data = await response.json();
+                            if (data.success) {
+                                startChatSession(user);
+                            } else {
+                                errorEl.textContent = data.error || 'Authentication failed';
+                            }
+                        }
+
+                        function login() {
+                            performAuth('/login', byId('login-username').value.trim(), byId('login-password').value.trim(), byId('login-error'));
+                        }
+
+                        function register() {
+                            performAuth('/register', byId('register-username').value.trim(), byId('register-password').value.trim(), byId('register-error'));
+                        }
+
+                        function clearChatHistory() {
+                            if (currentRecipient) {
+                                if (confirm(`Clear all chat history with ${currentRecipient}?`)) {
+                                    socket.emit("clear_history", { user1: username, user2: currentRecipient });
+                                }
+                            }
+                        }
+
+                        // Connection Status Handling
+                        socket.on("connect", () => {
+                            const statusEl = byId('connection-status');
+                            statusEl.style.display = 'block';
+                            statusEl.textContent = "Connected";
+                            statusEl.style.color = "#48bb78";
+                            if (username) {
+                                socket.emit("register_user", username);
+                            }
+                        });
+
+                        socket.on("disconnect", () => {
+                            const statusEl = byId('connection-status');
+                            statusEl.style.display = 'block';
+                            statusEl.textContent = "Disconnected";
+                            statusEl.style.color = "#e53e3e";
+                        });
+
+                        socket.on("update_users", users => {
+                            const userList = byId('userList');
+                            userList.innerHTML = "";
+                            let recipientIsOnline = false;
+
+                            // Update count
+                            const countEl = byId('user-count');
+                            if (countEl) countEl.textContent = `(${users.length})`;
+
+                            users.forEach(u => {
+                                if (u === username) return;
+                                if (u === currentRecipient) recipientIsOnline = true;
+
+                                const li = document.createElement("li");
+                                li.textContent = u;
+                                if (u === currentRecipient) li.classList.add('active');
+
+                                li.onclick = () => {
+                                    if (currentRecipient === u) return;
+                                    currentRecipient = u;
+
+                                    document.querySelectorAll('#userList li').forEach(item => item.classList.remove('active'));
+                                    li.classList.add('active');
+
+                                    byId('chat-partner-name').textContent = `Chat with ${currentRecipient}`;
+                                    byId('messages').innerHTML = "";
+                                    byId('chat-window').style.display = "flex";
+
+                                    socket.emit("get_history", { user1: username, user2: currentRecipient });
+                                };
+                                userList.appendChild(li);
+                            });
+
+                            if (!recipientIsOnline && currentRecipient) {
+                                currentRecipient = null;
+                                byId('chat-window').style.display = "none";
+                            }
+                        });
+
+                        socket.on("chat_history", data => {
+                            const { history, key } = data;
+                            sharedKeys[currentRecipient] = key;
+                            byId('messages').innerHTML = "";
+                            history.forEach(msg => appendMessage(msg.sender, msg.message));
+                        });
+
+                        socket.on("history_cleared", () => {
+                            byId('messages').innerHTML = "";
+                        });
+
+                        socket.on("receive_message", data => {
+                            const partner = data.sender === username ? currentRecipient : data.sender;
+                            if (partner && data.key) {
+                                sharedKeys[partner] = data.key;
+                            }
+
+                            let displayMsg = data.message;
+                            if (data.sender !== username) {
+                                const key = sharedKeys[data.sender];
+                                displayMsg = xorCipher(data.message, key);
+                            }
+
+                            if (data.sender === currentRecipient || (data.sender === username && partner === currentRecipient)) {
+                                appendMessage(data.sender, displayMsg);
+                            }
+                        });
+
+                        function sendMessage() {
+                            const input = byId('messageInput');
+                            const text = input.value.trim();
+                            if (text && currentRecipient) {
+                                socket.emit("send_message", {
+                                    sender: username,
+                                    recipient: currentRecipient,
+                                    message: text
+                                });
+                                input.value = "";
+                            }
+                        }
+
+                        function handleKey(event) {
+                            if (event.key === 'Enter') {
+                                sendMessage();
+                            }
+                        }
+                    </script>
+                </body>
 
 </html>
