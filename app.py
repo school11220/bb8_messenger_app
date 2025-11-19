@@ -4,6 +4,15 @@ eventlet.monkey_patch()
 import os
 import json
 import random
+
+# Load environment variables from .env file (for local development)
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    # dotenv not installed (production) - Render provides env vars directly
+    pass
+
 from flask import Flask, request, jsonify, send_from_directory
 from flask_socketio import SocketIO, emit
 from threading import Lock

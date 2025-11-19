@@ -414,7 +414,12 @@
     <script src="https://cdn.socket.io/4.7.2/socket.io.min.js" crossorigin="anonymous" defer></script>
     <script defer>
         document.addEventListener("DOMContentLoaded", () => {
-            const socket = io();
+            const socket = io({
+                transports: ['websocket', 'polling'],
+                reconnection: true,
+                reconnectionDelay: 1000,
+                reconnectionAttempts: 5
+            });
             let username = null;
             let currentRecipient = null;
             const sharedKeys = {};
@@ -550,6 +555,15 @@
 
             socket.on("disconnect", () => {
                 updateConnectionStatus(false);
+            });
+
+            socket.on("connect_error", (error) => {
+                console.error("Socket connection error:", error);
+                updateConnectionStatus(false);
+            });
+
+            socket.on("error", (error) => {
+                console.error("Socket error:", error);
             });
 
             socket.on("update_users", (users) => {
