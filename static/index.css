@@ -1,6 +1,6 @@
 /* ==================== CSS Variables & Design System ==================== */
 :root {
-    /* Color Palette - Modern Minimalist Premium */
+    /* Dark Theme Color Palette */
     --primary-gradient: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
     --primary-color: #667eea;
     --primary-dark: #5568d3;
@@ -9,32 +9,32 @@
     --secondary-gradient: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
     --accent-color: #764ba2;
     
-    --bg-gradient: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
-    --bg-light: #ffffff;
-    --bg-secondary: #f7f9fc;
-    --bg-tertiary: #e8ecf3;
+    --bg-gradient: linear-gradient(135deg, #0f0f23 0%, #1a1a2e 100%);
+    --bg-light: #16213e;
+    --bg-secondary: #0f1419;
+    --bg-tertiary: #1a1f2e;
     
-    --text-primary: #2d3748;
-    --text-secondary: #718096;
-    --text-light: #a0aec0;
-    --text-white: #ffffff;
+    --text-primary: #e4e4e7;
+    --text-secondary: #a1a1aa;
+    --text-light: #71717a;
+    --text-white: #fafafa;
     
-    --border-color: #e2e8f0;
-    --border-light: #edf2f7;
+    --border-color: #27272a;
+    --border-light: #3f3f46;
     
-    --success-color: #48bb78;
-    --error-color: #f56565;
-    --warning-color: #ed8936;
+    --success-color: #10b981;
+    --error-color: #ef4444;
+    --warning-color: #f59e0b;
     
-    /* Shadows */
-    --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.08);
-    --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.1);
-    --shadow-lg: 0 10px 30px rgba(0, 0, 0, 0.15);
-    --shadow-xl: 0 20px 50px rgba(0, 0, 0, 0.2);
+    /* Shadows - Dark theme optimized */
+    --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.5);
+    --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.6);
+    --shadow-lg: 0 10px 30px rgba(0, 0, 0, 0.7);
+    --shadow-xl: 0 20px 50px rgba(0, 0, 0, 0.8);
     
-    /* Glassmorphism */
-    --glass-bg: rgba(255, 255, 255, 0.7);
-    --glass-border: rgba(255, 255, 255, 0.3);
+    /* Glassmorphism - Dark */
+    --glass-bg: rgba(22, 33, 62, 0.7);
+    --glass-border: rgba(102, 126, 234, 0.2);
     
     /* Spacing */
     --spacing-xs: 4px;
@@ -154,16 +154,17 @@ body {
     margin-bottom: var(--spacing-lg);
     font-size: 2rem;
     font-weight: 700;
-    text-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
+    text-shadow: 0 2px 10px rgba(102, 126, 234, 0.3);
 }
 
 .auth-box input {
     width: 100%;
     padding: 14px 18px;
     margin-bottom: var(--spacing-md);
-    border: 2px solid transparent;
+    border: 2px solid var(--border-color);
     border-radius: var(--radius-md);
-    background: rgba(255, 255, 255, 0.9);
+    background: var(--bg-secondary);
+    color: var(--text-primary);
     font-size: 15px;
     transition: all var(--transition-base);
     font-family: var(--font-family);
@@ -173,7 +174,7 @@ body {
     outline: none;
     border-color: var(--primary-color);
     background: var(--bg-light);
-    box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+    box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.2);
     transform: translateY(-2px);
 }
 
@@ -246,7 +247,8 @@ body {
 
 .error {
     color: var(--error-color);
-    background: rgba(245, 101, 101, 0.1);
+    background: rgba(239, 68, 68, 0.15);
+    border: 1px solid rgba(239, 68, 68, 0.3);
     padding: var(--spacing-sm);
     border-radius: var(--radius-sm);
     text-align: center;
@@ -302,12 +304,12 @@ body {
     letter-spacing: 0.08em;
     font-weight: 600;
     border-bottom: 1px solid var(--border-color);
-    background: rgba(245, 101, 101, 0.08);
+    background: rgba(239, 68, 68, 0.1);
 }
 
 .connection-status.connected {
     color: var(--success-color);
-    background: rgba(72, 187, 120, 0.08);
+    background: rgba(16, 185, 129, 0.1);
 }
 
 #userList {
@@ -413,7 +415,7 @@ body {
     display: flex;
     flex-direction: column;
     gap: var(--spacing-sm);
-    background: linear-gradient(to bottom, #f7f9fc 0%, #ffffff 100%);
+    background: var(--bg-secondary);
 }
 
 #messages::-webkit-scrollbar {
@@ -464,11 +466,11 @@ body {
 }
 
 .message.received {
-    background: var(--bg-secondary);
+    background: var(--bg-tertiary);
     color: var(--text-primary);
     align-self: flex-start;
     border-bottom-left-radius: 4px;
-    border: 1px solid var(--border-light);
+    border: 1px solid var(--border-color);
 }
 
 .sender-name {
@@ -519,6 +521,7 @@ body {
     transition: all var(--transition-base);
     font-family: var(--font-family);
     background: var(--bg-secondary);
+    color: var(--text-primary);
 }
 
 #input-area input:focus {
