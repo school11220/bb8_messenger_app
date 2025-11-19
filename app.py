@@ -198,10 +198,12 @@ def handle_get_history(data):
     emit("chat_history", {"history": history, "key": key})
 
 
+# Ensure tables are created in production
+with app.app_context():
+    db.create_all()
+
 # ------------------ Main ------------------
 if __name__ == "__main__":
-    with app.app_context():
-        db.create_all()
     # Use environment variables for production deployment
     port = int(os.environ.get("PORT", 5000))
     socketio.run(app, host="0.0.0.0", port=port, debug=False)
