@@ -9,9 +9,18 @@ from datetime import datetime
 
 # ------------------ Flask and DB Setup ------------------
 app = Flask(__name__, static_folder="static")
-# Use an absolute path for the database to avoid issues with PyInstaller's temp folder
 basedir = os.path.abspath(os.path.dirname(__file__))
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///' + os.path.join(basedir, 'chat.db')
+
+# Use PostgreSQL in production (from environment variable), SQLite locally
+database_url = os.environ.get('DATABASE_URL')
+if database_url and database_url.startswith('postgres://'):
+    # Render uses postgres:// but SQLAlchemy needs postgresql://
+    database_url = database_url.replace('postgres://', 'postgresql://', 1)
+    app.config['SQLALCHEMY_DATABASE_URI'] = database_url
+else:
+    # Fallback to SQLite for local development
+    app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///' + os.path.join(basedir, 'chat.db')
+
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db = SQLAlchemy(app)
 # Updated SocketIO config for better deployment compatibility
