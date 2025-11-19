@@ -24,9 +24,11 @@ from werkzeug.security import generate_password_hash, check_password_hash
 app = Flask(__name__, static_folder="static")
 basedir = os.path.abspath(os.path.dirname(__file__))
 
-# Session configuration
-app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'bb84-quantum-secret-key-change-in-production')
-app.config['SESSION_TYPE'] = 'filesystem'
+# Session configuration - use Flask's built-in sessions (cookie-based)
+app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'bb84-quantum-secret-key-change-in-production-12345')
+app.config['SESSION_COOKIE_SECURE'] = False  # Set to True in production with HTTPS
+app.config['SESSION_COOKIE_HTTPONLY'] = True
+app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
 app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(days=7)
 
 # Use PostgreSQL in production (from environment variable), SQLite locally
@@ -151,22 +153,35 @@ def login():
     username = (data.get("username") or "").strip()
     password = data.get("password") or ""
     
+    print(f"Login attempt for user: {username}")
+    
     # Try database first (for production)
     with app.app_context():
         user = User.query.filter_by(username=username).first()
-        if user and check_password_hash(user.password_hash, password):
-            session['username'] = username
-            session.permanent = True
-            return jsonify({"success": True, "username": username})
+        if user:
+            print(f"User found in database: {username}")
+            if check_password_hash(user.password_hash, password):
+                print(f"Password verified for: {username}")
+                session['username'] = username
+                session.permanent = True
+                return jsonify({"success": True, "username": username})
+            else:
+                print(f"Password verification failed for: {username}")
+        else:
+            print(f"User not found in database: {username}")
     
     # Fallback to users.json (for local development with existing users)
     users = load_users()
     stored_password = users.get(username)
-    if stored_password and verify_password(stored_password, password):
-        session['username'] = username
-        session.permanent = True
-        return jsonify({"success": True, "username": username})
+    if stored_password:
+        print(f"User found in users.json: {username}")
+        if verify_password(stored_password, password):
+            print(f"Password verified from users.json for: {username}")
+            session['username'] = username
+            session.permanent = True
+            return jsonify({"success": True, "username": username})
     
+    print(f"Login failed for: {username}")
     return jsonify({"success": False, "error": "Invalid credentials"})
 
 @app.route("/register", methods=["POST"])
@@ -174,6 +189,8 @@ def register():
     data = request.json
     username = (data.get("username") or "").strip()
     password = (data.get("password") or "").strip()
+    
+    print(f"Registration attempt for user: {username}")
     
     if not username or not password:
         return jsonify({"success": False, "error": "Username and password required"}), 400
@@ -185,6 +202,7 @@ def register():
     with app.app_context():
         existing_user = User.query.filter_by(username=username).first()
         if existing_user:
+            print(f"Username already taken: {username}")
             return jsonify({"success": False, "error": "Username taken"})
         
         # Create new user in database
@@ -192,6 +210,7 @@ def register():
         new_user = User(username=username, password_hash=password_hash)
         db.session.add(new_user)
         db.session.commit()
+        print(f"User created in database: {username}")
     
     # Also save to users.json for local development compatibility
     users = load_users()
@@ -202,6 +221,7 @@ def register():
     session['username'] = username
     session.permanent = True
     
+    print(f"Registration successful for: {username}")
     return jsonify({"success": True, "username": username})
 
 @app.route("/check_session", methods=["GET"])
