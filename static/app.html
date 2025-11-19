@@ -435,10 +435,30 @@
                 register: byId("register-box")
             };
 
+            // Check for existing session on page load
+            async function checkExistingSession() {
+                try {
+                    const response = await fetch('/check_session');
+                    const data = await response.json();
+                    if (data.logged_in) {
+                        console.log("Found existing session for:", data.username);
+                        startChatSession(data.username);
+                        return true;
+                    }
+                } catch (error) {
+                    console.error("Error checking session:", error);
+                }
+                return false;
+            }
+
             function setError(element, message) {
                 if (element) {
                     element.textContent = message || "";
                 }
+            }
+
+            // Check session immediately when page loads
+            checkExistingSession();
             }
 
             function xorCipher(text, key) {
@@ -498,7 +518,7 @@
 
                     const data = await response.json();
                     if (data.success) {
-                        startChatSession(user);
+                        startChatSession(data.username || user);
                     } else {
                         setError(errorEl, data.error || "Authentication failed");
                     }
@@ -670,6 +690,17 @@
                 byId("register-error")
             );
 
+            window.handleLogout = async () => {
+                try {
+                    await fetch('/logout', { method: 'POST' });
+                    socket.disconnect();
+                    location.reload();
+                } catch (error) {
+                    console.error("Logout error:", error);
+                    location.reload();
+                }
+            };
+
             window.toggleAuth = toggleAuth;
             window.clearChatHistory = clearChatHistory;
             window.sendMessage = sendMessage;
@@ -709,6 +740,7 @@
                 <h3 id="current-user-header">Online Users <span id="user-count">(0)</span></h3>
                 <div id="connection-status" class="connection-status hidden">Disconnected</div>
                 <ul id="userList"></ul>
+                <button id="logout-btn" type="button" onclick="handleLogout()" style="margin: 12px; padding: 10px; background: #ef4444; color: #fff; border: none; border-radius: 8px; cursor: pointer;">Logout</button>
             </div>
             <div id="chat-window">
                 <div id="chat-header">

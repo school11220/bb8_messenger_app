@@ -13,16 +13,21 @@ except ImportError:
     # dotenv not installed (production) - Render provides env vars directly
     pass
 
-from flask import Flask, request, jsonify, send_from_directory
+from flask import Flask, request, jsonify, send_from_directory, session
 from flask_socketio import SocketIO, emit
 from threading import Lock
 from flask_sqlalchemy import SQLAlchemy
-from datetime import datetime
+from datetime import datetime, timedelta
 from werkzeug.security import generate_password_hash, check_password_hash
 
 # ------------------ Flask and DB Setup ------------------
 app = Flask(__name__, static_folder="static")
 basedir = os.path.abspath(os.path.dirname(__file__))
+
+# Session configuration
+app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'bb84-quantum-secret-key-change-in-production')
+app.config['SESSION_TYPE'] = 'filesystem'
+app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(days=7)
 
 # Use PostgreSQL in production (from environment variable), SQLite locally
 database_url = os.environ.get('DATABASE_URL')
@@ -150,13 +155,17 @@ def login():
     with app.app_context():
         user = User.query.filter_by(username=username).first()
         if user and check_password_hash(user.password_hash, password):
-            return jsonify({"success": True})
+            session['username'] = username
+            session.permanent = True
+            return jsonify({"success": True, "username": username})
     
     # Fallback to users.json (for local development with existing users)
     users = load_users()
     stored_password = users.get(username)
     if stored_password and verify_password(stored_password, password):
-        return jsonify({"success": True})
+        session['username'] = username
+        session.permanent = True
+        return jsonify({"success": True, "username": username})
     
     return jsonify({"success": False, "error": "Invalid credentials"})
 
@@ -189,6 +198,24 @@ def register():
     users[username] = password_hash
     save_users(users)
     
+    # Auto-login after registration
+    session['username'] = username
+    session.permanent = True
+    
+    return jsonify({"success": True, "username": username})
+
+@app.route("/check_session", methods=["GET"])
+def check_session():
+    """Check if user is already logged in"""
+    username = session.get('username')
+    if username:
+        return jsonify({"logged_in": True, "username": username})
+    return jsonify({"logged_in": False})
+
+@app.route("/logout", methods=["POST"])
+def logout():
+    """Logout user by clearing session"""
+    session.pop('username', None)
     return jsonify({"success": True})
 
 # ------------------ WebSocket Events ------------------
