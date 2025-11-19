@@ -49,6 +49,15 @@ socketio = SocketIO(app,
                     transports=['websocket', 'polling'])
 
 # ------------------ Database Model ------------------
+class User(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    username = db.Column(db.String(100), unique=True, nullable=False)
+    password_hash = db.Column(db.String(200), nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    def __repr__(self):
+        return f'<User {self.username}>'
+
 class Message(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     sender = db.Column(db.String(100), nullable=False)
@@ -136,10 +145,19 @@ def login():
     data = request.json
     username = (data.get("username") or "").strip()
     password = data.get("password") or ""
+    
+    # Try database first (for production)
+    with app.app_context():
+        user = User.query.filter_by(username=username).first()
+        if user and check_password_hash(user.password_hash, password):
+            return jsonify({"success": True})
+    
+    # Fallback to users.json (for local development with existing users)
     users = load_users()
     stored_password = users.get(username)
     if stored_password and verify_password(stored_password, password):
         return jsonify({"success": True})
+    
     return jsonify({"success": False, "error": "Invalid credentials"})
 
 @app.route("/register", methods=["POST"])
@@ -147,18 +165,30 @@ def register():
     data = request.json
     username = (data.get("username") or "").strip()
     password = (data.get("password") or "").strip()
-    users = load_users()
+    
     if not username or not password:
         return jsonify({"success": False, "error": "Username and password required"}), 400
 
     if len(username) < 3 or len(password) < 6:
         return jsonify({"success": False, "error": "Username must be 3+ chars and password 6+ chars"}), 400
 
-    if username in users:
-        return jsonify({"success": False, "error": "Username taken"})
-
-    users[username] = generate_password_hash(password)
+    # Check if user already exists in database
+    with app.app_context():
+        existing_user = User.query.filter_by(username=username).first()
+        if existing_user:
+            return jsonify({"success": False, "error": "Username taken"})
+        
+        # Create new user in database
+        password_hash = generate_password_hash(password)
+        new_user = User(username=username, password_hash=password_hash)
+        db.session.add(new_user)
+        db.session.commit()
+    
+    # Also save to users.json for local development compatibility
+    users = load_users()
+    users[username] = password_hash
     save_users(users)
+    
     return jsonify({"success": True})
 
 # ------------------ WebSocket Events ------------------
