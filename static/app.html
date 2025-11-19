@@ -415,10 +415,14 @@
     <script defer>
         document.addEventListener("DOMContentLoaded", () => {
             const socket = io({
-                transports: ['websocket', 'polling'],
+                transports: ['polling', 'websocket'],
                 reconnection: true,
                 reconnectionDelay: 1000,
-                reconnectionAttempts: 5
+                reconnectionDelayMax: 5000,
+                reconnectionAttempts: 10,
+                timeout: 20000,
+                forceNew: false,
+                autoConnect: true
             });
             let username = null;
             let currentRecipient = null;
@@ -547,23 +551,38 @@
 
             // Socket wiring
             socket.on("connect", () => {
+                console.log("✅ Socket.IO connected!");
                 updateConnectionStatus(true);
                 if (username) {
                     socket.emit("register_user", username);
                 }
             });
 
-            socket.on("disconnect", () => {
+            socket.on("disconnect", (reason) => {
+                console.log("❌ Socket.IO disconnected. Reason:", reason);
                 updateConnectionStatus(false);
             });
 
             socket.on("connect_error", (error) => {
-                console.error("Socket connection error:", error);
+                console.error("🔴 Socket connection error:", error.message);
+                console.error("Transport:", error.transport);
                 updateConnectionStatus(false);
             });
 
             socket.on("error", (error) => {
-                console.error("Socket error:", error);
+                console.error("🔴 Socket error:", error);
+            });
+
+            socket.on("reconnect_attempt", (attemptNumber) => {
+                console.log("🔄 Reconnection attempt #" + attemptNumber);
+            });
+
+            socket.on("reconnect", (attemptNumber) => {
+                console.log("✅ Reconnected after " + attemptNumber + " attempts");
+                updateConnectionStatus(true);
+                if (username) {
+                    socket.emit("register_user", username);
+                }
             });
 
             socket.on("update_users", (users) => {

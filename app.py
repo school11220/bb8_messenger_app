@@ -37,13 +37,16 @@ else:
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db = SQLAlchemy(app)
 # Updated SocketIO config for better deployment compatibility
+# Allow both websocket and polling for Render compatibility
 socketio = SocketIO(app, 
                     cors_allowed_origins="*", 
                     async_mode="eventlet",
                     logger=True,
                     engineio_logger=True,
-                    ping_timeout=60,
-                    ping_interval=25)
+                    ping_timeout=120,
+                    ping_interval=25,
+                    allow_upgrades=True,
+                    transports=['websocket', 'polling'])
 
 # ------------------ Database Model ------------------
 class Message(db.Model):
