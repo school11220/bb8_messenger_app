@@ -294,6 +294,22 @@ body {
     font-size: 1.2rem;
 }
 
+.connection-status {
+    padding: var(--spacing-xs) var(--spacing-lg);
+    font-size: 0.75rem;
+    color: var(--error-color);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-weight: 600;
+    border-bottom: 1px solid var(--border-color);
+    background: rgba(245, 101, 101, 0.08);
+}
+
+.connection-status.connected {
+    color: var(--success-color);
+    background: rgba(72, 187, 120, 0.08);
+}
+
 #userList {
     list-style-type: none;
     padding: var(--spacing-sm);

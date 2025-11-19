@@ -9,6 +9,7 @@ from flask_socketio import SocketIO, emit
 from threading import Lock
 from flask_sqlalchemy import SQLAlchemy
 from datetime import datetime
+from werkzeug.security import generate_password_hash, check_password_hash
 
 # ------------------ Flask and DB Setup ------------------
 app = Flask(__name__, static_folder="static")
@@ -47,7 +48,7 @@ class Message(db.Model):
         return f'<Message from {self.sender} to {self.recipient}>'
 
 # ------------------ User Auth ------------------
-USERS_FILE = "users.json"
+USERS_FILE = os.path.join(basedir, "users.json")
 
 def load_users():
     if not os.path.exists(USERS_FILE):
@@ -61,6 +62,20 @@ def load_users():
 def save_users(users):
     with open(USERS_FILE, "w") as f:
         json.dump(users, f, indent=4)
+
+
+def verify_password(stored_password, provided_password):
+    """Support legacy plain-text passwords and new hashed passwords."""
+    if not stored_password or not provided_password:
+        return False
+
+    if stored_password.startswith("pbkdf2:"):
+        try:
+            return check_password_hash(stored_password, provided_password)
+        except ValueError:
+            return False
+
+    return stored_password == provided_password
 
 # ------------------ BB84 with Qiskit ------------------
 def bb84_protocol(n=32):
@@ -102,27 +117,35 @@ def get_shared_key(user1, user2):
 # ------------------ Routes ------------------
 @app.route("/")
 def index():
-    return send_from_directory("static", "index.html")
+    return send_from_directory("static", "app.html")
 
 @app.route("/login", methods=["POST"])
 def login():
     data = request.json
-    username = data.get("username")
-    password = data.get("password")
+    username = (data.get("username") or "").strip()
+    password = data.get("password") or ""
     users = load_users()
-    if username in users and users[username] == password:
+    stored_password = users.get(username)
+    if stored_password and verify_password(stored_password, password):
         return jsonify({"success": True})
     return jsonify({"success": False, "error": "Invalid credentials"})
 
 @app.route("/register", methods=["POST"])
 def register():
     data = request.json
-    username = data.get("username")
-    password = data.get("password")
+    username = (data.get("username") or "").strip()
+    password = (data.get("password") or "").strip()
     users = load_users()
+    if not username or not password:
+        return jsonify({"success": False, "error": "Username and password required"}), 400
+
+    if len(username) < 3 or len(password) < 6:
+        return jsonify({"success": False, "error": "Username must be 3+ chars and password 6+ chars"}), 400
+
     if username in users:
         return jsonify({"success": False, "error": "Username taken"})
-    users[username] = password
+
+    users[username] = generate_password_hash(password)
     save_users(users)
     return jsonify({"success": True})
 
@@ -145,6 +168,10 @@ def handle_disconnect():
 
 @socketio.on("register_user")
 def handle_register_user(username):
+    if not username:
+        return
+
+    # Replace any stale connection for the same username
     online_users[username] = request.sid
     emit("update_users", list(online_users.keys()), broadcast=True)
 
@@ -154,6 +181,9 @@ def handle_send_message(data):
     recipient = data.get("recipient")
     message = data.get("message")
     
+    if not sender or not recipient or not message:
+        return
+
     key = get_shared_key(sender, recipient)
     encrypted_msg = xor_encrypt_decrypt(message, key)
 
@@ -168,9 +198,11 @@ def handle_send_message(data):
         }, room=online_users[recipient])
     
     # Send plaintext back to sender for their own UI
-    emit("receive_message", {
-        "sender": sender, "message": message, "key": key
-    }, room=online_users[sender])
+    sender_sid = online_users.get(sender)
+    if sender_sid:
+        emit("receive_message", {
+            "sender": sender, "message": message, "key": key
+        }, room=sender_sid)
 
 
 @socketio.on("get_history")
@@ -196,6 +228,27 @@ def handle_get_history(data):
             history.append({"sender": msg.sender, "message": "[Decryption Error]"})
 
     emit("chat_history", {"history": history, "key": key})
+
+
+@socketio.on("clear_history")
+def handle_clear_history(data):
+    user1 = data.get("user1")
+    user2 = data.get("user2")
+
+    if not user1 or not user2:
+        return
+
+    with app.app_context():
+        db.session.query(Message).filter(
+            ((Message.sender == user1) & (Message.recipient == user2)) |
+            ((Message.sender == user2) & (Message.recipient == user1))
+        ).delete(synchronize_session=False)
+        db.session.commit()
+
+    for user in {user1, user2}:
+        sid = online_users.get(user)
+        if sid:
+            emit("history_cleared", room=sid)
 
 
 # Ensure tables are created in production

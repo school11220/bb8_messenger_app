@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BB84 Quantum Chat</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="index.css">
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js" crossorigin="anonymous" defer></script>
+    <script defer>
+        document.addEventListener("DOMContentLoaded", () => {
+            const socket = io();
+            let username = null;
+            let currentRecipient = null;
+            const sharedKeys = {};
+
+            const byId = (id) => document.getElementById(id);
+
+            const authScreens = {
+                login: byId("login-box"),
+                register: byId("register-box")
+            };
+
+            function setError(element, message) {
+                if (element) {
+                    element.textContent = message || "";
+                }
+            }
+
+            function xorCipher(text, key) {
+                if (!key) return "[DECRYPTION KEY MISSING]";
+                const keyBits = key.split("").map(Number);
+                const keyLen = keyBits.length;
+                try {
+                    return text.split("").map((ch, i) =>
+                        String.fromCharCode(ch.charCodeAt(0) ^ keyBits[i % keyLen])
+                    ).join("");
+                } catch (error) {
+                    console.error("Cipher error", error);
+                    return "[DECRYPTION FAILED]";
+                }
+            }
+
+            function appendMessage(sender, message) {
+                const msgDiv = document.createElement("div");
+                msgDiv.className = "message " + (sender === username ? "sent" : "received");
+
+                const senderSpan = document.createElement("span");
+                senderSpan.className = "sender-name";
+                senderSpan.textContent = sender;
+
+                const msgContent = document.createElement("p");
+                msgContent.textContent = message;
+
+                msgDiv.appendChild(senderSpan);
+                msgDiv.appendChild(msgContent);
+
+                const messagesContainer = byId("messages");
+                messagesContainer.appendChild(msgDiv);
+                messagesContainer.scrollTop = messagesContainer.scrollHeight;
+            }
+
+            function toggleAuth(mode) {
+                if (!authScreens[mode]) return;
+                Object.keys(authScreens).forEach((key) => {
+                    authScreens[key].classList.toggle("hidden", key !== mode);
+                });
+                setError(byId("login-error"), "");
+                setError(byId("register-error"), "");
+            }
+
+            async function performAuth(endpoint, user, pass, errorEl) {
+                if (!user || !pass) {
+                    setError(errorEl, "Please fill in all fields");
+                    return;
+                }
+
+                try {
+                    const response = await fetch(endpoint, {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ username: user, password: pass })
+                    });
+
+                    const data = await response.json();
+                    if (data.success) {
+                        startChatSession(user);
+                    } else {
+                        setError(errorEl, data.error || "Authentication failed");
+                    }
+                } catch (error) {
+                    console.error("Auth error", error);
+                    setError(errorEl, "Unable to reach the server. Please try again.");
+                }
+            }
+
+            function startChatSession(user) {
+                username = user;
+                byId("auth-screen").classList.add("hidden");
+                byId("chat-screen").style.display = "flex";
+                byId("messages").innerHTML = "<p id='welcome'>Select a user to start chatting</p>";
+                socket.emit("register_user", username);
+            }
+
+            function clearChatHistory() {
+                if (currentRecipient && confirm(`Clear all chat history with ${currentRecipient}?`)) {
+                    socket.emit("clear_history", { user1: username, user2: currentRecipient });
+                }
+            }
+
+            function updateConnectionStatus(connected) {
+                const statusEl = byId("connection-status");
+                statusEl.textContent = connected ? "Connected" : "Disconnected";
+                statusEl.classList.toggle("connected", connected);
+                statusEl.classList.remove("hidden");
+            }
+
+            function sendMessage() {
+                const input = byId("messageInput");
+                const text = input.value.trim();
+                if (text && currentRecipient) {
+                    socket.emit("send_message", {
+                        sender: username,
+                        recipient: currentRecipient,
+                        message: text
+                    });
+                    input.value = "";
+                    input.focus();
+                }
+            }
+
+            function handleKey(event) {
+                if (event.key === "Enter") {
+                    sendMessage();
+                }
+            }
+
+            // Socket wiring
+            socket.on("connect", () => {
+                updateConnectionStatus(true);
+                if (username) {
+                    socket.emit("register_user", username);
+                }
+            });
+
+            socket.on("disconnect", () => {
+                updateConnectionStatus(false);
+            });
+
+            socket.on("update_users", (users) => {
+                const userList = byId("userList");
+                userList.innerHTML = "";
+
+                const countEl = byId("user-count");
+                if (countEl) countEl.textContent = `(${users.length})`;
+
+                let recipientStillOnline = false;
+                users.forEach((user) => {
+                    if (user === username) return;
+                    if (user === currentRecipient) recipientStillOnline = true;
+
+                    const li = document.createElement("li");
+                    li.textContent = user;
+                    if (user === currentRecipient) li.classList.add("active");
+                    li.onclick = () => {
+                        if (currentRecipient === user) return;
+                        currentRecipient = user;
+                        document.querySelectorAll("#userList li").forEach((item) => item.classList.remove("active"));
+                        li.classList.add("active");
+                        byId("chat-partner-name").textContent = `Chat with ${currentRecipient}`;
+                        byId("messages").innerHTML = "";
+                        byId("chat-window").style.display = "flex";
+                        socket.emit("get_history", { user1: username, user2: currentRecipient });
+                    };
+                    userList.appendChild(li);
+                });
+
+                if (!recipientStillOnline) {
+                    currentRecipient = null;
+                    byId("chat-window").style.display = "none";
+                }
+            });
+
+            socket.on("chat_history", ({ history, key }) => {
+                if (currentRecipient) {
+                    sharedKeys[currentRecipient] = key;
+                    const messagesEl = byId("messages");
+                    messagesEl.innerHTML = "";
+                    if (!history.length) {
+                        messagesEl.innerHTML = "<p id='welcome'>No messages yet. Say hi! 👋</p>";
+                    } else {
+                        history.forEach((msg) => appendMessage(msg.sender, msg.message));
+                    }
+                }
+            });
+
+            socket.on("history_cleared", () => {
+                if (currentRecipient) {
+                    byId("messages").innerHTML = "<p id='welcome'>Chat history was cleared.</p>";
+                }
+            });
+
+            socket.on("receive_message", (data) => {
+                const partner = data.sender === username ? currentRecipient : data.sender;
+                if (partner && data.key) {
+                    sharedKeys[partner] = data.key;
+                }
+
+                let displayMsg = data.message;
+                if (data.sender !== username) {
+                    const key = sharedKeys[data.sender];
+                    displayMsg = xorCipher(data.message, key);
+                }
+
+                if (data.sender === currentRecipient || (data.sender === username && partner === currentRecipient)) {
+                    appendMessage(data.sender, displayMsg);
+                }
+            });
+
+            // Expose helpers globally for button handlers
+            window.login = () => performAuth(
+                "/login",
+                byId("login-username").value.trim(),
+                byId("login-password").value.trim(),
+                byId("login-error")
+            );
+
+            window.register = () => performAuth(
+                "/register",
+                byId("register-username").value.trim(),
+                byId("register-password").value.trim(),
+                byId("register-error")
+            );
+
+            window.toggleAuth = toggleAuth;
+            window.clearChatHistory = clearChatHistory;
+            window.sendMessage = sendMessage;
+            window.handleKey = handleKey;
+        });
+    </script>
+</head>
+
+<body>
+    <div class="container">
+        <div id="auth-screen">
+            <div id="login-box" class="auth-box">
+                <h2>Welcome Back</h2>
+                <input id="login-username" type="text" placeholder="Username" autocomplete="username" required>
+                <input id="login-password" type="password" placeholder="Password" autocomplete="current-password" required>
+                <button type="button" onclick="login()">Sign In</button>
+                <p class="auth-toggle">Don't have an account?
+                    <a role="button" tabindex="0" onclick="toggleAuth('register')">Sign Up</a>
+                </p>
+                <p id="login-error" class="error" aria-live="assertive"></p>
+            </div>
+
+            <div id="register-box" class="auth-box hidden">
+                <h2>Create Account</h2>
+                <input id="register-username" type="text" placeholder="Username" autocomplete="username" required>
+                <input id="register-password" type="password" placeholder="Password" autocomplete="new-password" required>
+                <button type="button" onclick="register()">Sign Up</button>
+                <p class="auth-toggle">Already have an account?
+                    <a role="button" tabindex="0" onclick="toggleAuth('login')">Sign In</a>
+                </p>
+                <p id="register-error" class="error" aria-live="assertive"></p>
+            </div>
+        </div>
+
+        <div id="chat-screen">
+            <div id="users">
+                <h3 id="current-user-header">Online Users <span id="user-count">(0)</span></h3>
+                <div id="connection-status" class="connection-status hidden">Disconnected</div>
+                <ul id="userList"></ul>
+            </div>
+            <div id="chat-window">
+                <div id="chat-header">
+                    <h3 id="chat-partner-name">Select a user</h3>
+                    <button id="clear-history-btn" type="button" onclick="clearChatHistory()">Clear History</button>
+                </div>
+                <div id="messages">
+                    <p id="welcome">Select a user to start chatting</p>
+                </div>
+                <div id="input-area">
+                    <input id="messageInput" type="text" placeholder="Type a message..." onkeydown="handleKey(event)">
+                    <button type="button" onclick="sendMessage()">Send</button>
+                </div>
+            </div>
+        </div>
+    </div>
+</body>
+
+</html>
