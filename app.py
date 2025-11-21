@@ -17,6 +17,7 @@ from flask import Flask, request, jsonify, send_from_directory, session
 from flask_socketio import SocketIO, emit
 from threading import Lock
 from flask_sqlalchemy import SQLAlchemy
+from sqlalchemy import text
 from datetime import datetime, timedelta
 from werkzeug.security import generate_password_hash, check_password_hash
 
@@ -32,11 +33,28 @@ app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
 app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(days=7)
 
 # Use PostgreSQL in production (from environment variable), SQLite locally
-database_url = os.environ.get('DATABASE_URL')
+def _find_database_url():
+    # Look for a DB URL in several commonly used environment variable names.
+    candidates = [
+        'DATABASE_URL',
+        'RAILWAY_DATABASE_URL',
+        'POSTGRES_URL',
+        'POSTGRESQL_URL',
+        'PG_URI',
+        'SQLALCHEMY_DATABASE_URI',
+        'DB_URL'
+    ]
+    for key in candidates:
+        val = os.environ.get(key)
+        if val:
+            print(f"[startup] Found DB env var: {key}")
+            return val
+    return None
+
+database_url = _find_database_url()
 if database_url:
     # Normalize common Postgres schemes (some providers give postgres:// while SQLAlchemy
-    # prefers postgresql://). If DATABASE_URL is set, always use it (don't fall back
-    # to SQLite) so production DBs like Railway/Postgres are used correctly.
+    # prefers postgresql://).
     if database_url.startswith('postgres://'):
         database_url = database_url.replace('postgres://', 'postgresql://', 1)
     app.config['SQLALCHEMY_DATABASE_URI'] = database_url
@@ -522,7 +540,21 @@ with app.app_context():
         engine_name = getattr(db.engine, 'name', None)
     except Exception:
         engine_name = None
-    print(f"[startup] DATABASE_URL provided: {bool(os.environ.get('DATABASE_URL'))}, DB engine: {engine_name}")
+    # Also print which env var we used (if any) and test a simple SELECT
+    used_env = None
+    for k in ('DATABASE_URL', 'RAILWAY_DATABASE_URL', 'POSTGRES_URL', 'POSTGRESQL_URL', 'PG_URI', 'SQLALCHEMY_DATABASE_URI', 'DB_URL'):
+        if os.environ.get(k):
+            used_env = k
+            break
+    print(f"[startup] DATABASE_ENV_VAR: {used_env}, DB engine: {engine_name}")
+
+    # Quick DB connectivity test (SELECT 1)
+    try:
+        with db.engine.connect() as conn:
+            conn.execute(text('SELECT 1'))
+        print('[startup] DB connection test: OK')
+    except Exception as e:
+        print(f"[startup] DB connection test: FAILED - {e}")
     # Lightweight schema migration: add missing columns if they don't exist.
     # This helps when the app evolves and the DB was created earlier without new columns.
     def _add_column_if_missing(table_name, column_sql):
