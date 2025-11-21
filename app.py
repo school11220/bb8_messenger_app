@@ -33,9 +33,12 @@ app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(days=7)
 
 # Use PostgreSQL in production (from environment variable), SQLite locally
 database_url = os.environ.get('DATABASE_URL')
-if database_url and database_url.startswith('postgres://'):
-    # Render uses postgres:// but SQLAlchemy needs postgresql://
-    database_url = database_url.replace('postgres://', 'postgresql://', 1)
+if database_url:
+    # Normalize common Postgres schemes (some providers give postgres:// while SQLAlchemy
+    # prefers postgresql://). If DATABASE_URL is set, always use it (don't fall back
+    # to SQLite) so production DBs like Railway/Postgres are used correctly.
+    if database_url.startswith('postgres://'):
+        database_url = database_url.replace('postgres://', 'postgresql://', 1)
     app.config['SQLALCHEMY_DATABASE_URI'] = database_url
 else:
     # Fallback to SQLite for local development
