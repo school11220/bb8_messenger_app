@@ -174,6 +174,23 @@ def get_shared_key(user1, user2):
 def index():
     return send_from_directory("static", "app.html")
 
+
+@app.route('/health', methods=['GET'])
+def health():
+    """Simple health check endpoint for deployment diagnostics."""
+    return jsonify({'status': 'ok', 'uptime': True}), 200
+
+
+@app.route('/admin/users', methods=['GET'])
+def admin_list_users():
+    """Return list of registered users (for quick debug). Remove or protect in production."""
+    try:
+        with app.app_context():
+            users = [u.username for u in User.query.order_by(User.id.desc()).limit(100).all()]
+        return jsonify({'count': len(users), 'users': users})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
 @app.route("/login", methods=["POST"])
 def login():
     data = request.json
