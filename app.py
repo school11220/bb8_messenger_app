@@ -43,19 +43,42 @@ else:
 
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db = SQLAlchemy(app)
-# Updated SocketIO config for better deployment compatibility
-# Allow both websocket and polling for Render compatibility
-socketio = SocketIO(app, 
-                    cors_allowed_origins="*", 
+
+# Initialize Socket.IO (must be after app and db)
+socketio = SocketIO(app,
+                    cors_allowed_origins="*",
                     async_mode="eventlet",
-                    logger=True,
-                    engineio_logger=True,
+                    logger=False,
+                    engineio_logger=False,
                     ping_timeout=120,
                     ping_interval=25,
                     allow_upgrades=True,
-                    transports=['websocket', 'polling'])
+                    transports=['polling', 'websocket'])
 
-# ------------------ Database Model ------------------
+# ------------------ Database Models ------------------
+group_members = db.Table('group_members',
+    db.Column('user_id', db.Integer, db.ForeignKey('user.id'), primary_key=True),
+    db.Column('group_id', db.Integer, db.ForeignKey('group.id'), primary_key=True)
+)
+
+class Group(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(100), unique=True, nullable=False)
+    creator_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    members = db.relationship('User', secondary=group_members, lazy='subquery',
+                              backref=db.backref('groups', lazy=True))
+
+    def __repr__(self):
+        return f'<Group {self.name}>'
+
+    creator = db.relationship('User', backref='created_groups')
+    members = db.relationship('User', secondary=group_members, lazy='subquery',
+                              backref=db.backref('groups', lazy=True))
+
+    def __repr__(self):
+        return f'<Group {self.name}>'
+
+
 class User(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(100), unique=True, nullable=False)
@@ -68,9 +91,13 @@ class User(db.Model):
 class Message(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     sender = db.Column(db.String(100), nullable=False)
-    recipient = db.Column(db.String(100), nullable=False)
+    recipient = db.Column(db.String(100), nullable=True) # Can be null for group messages
+    group_id = db.Column(db.Integer, db.ForeignKey('group.id'), nullable=True)
     encrypted_message = db.Column(db.String(500), nullable=False)
     timestamp = db.Column(db.DateTime, default=datetime.utcnow)
+    status = db.Column(db.String(20), nullable=False, default='sent') # sent, delivered, read
+    read = db.Column(db.Boolean, default=False)
+    edited = db.Column(db.Boolean, default=False)
 
     def __repr__(self):
         return f'<Message from {self.sender} to {self.recipient}>'
@@ -264,6 +291,14 @@ def handle_register_user(username):
     online_users[username] = request.sid
     emit("update_users", list(online_users.keys()), broadcast=True)
 
+    # Calculate and send unread message counts
+    with app.app_context():
+        unread_counts = db.session.query(Message.sender, db.func.count(Message.id)).filter(
+            Message.recipient == username,
+            Message.read == False
+        ).group_by(Message.sender).all()
+        emit("unread_counts", dict(unread_counts))
+
 @socketio.on("send_message")
 def handle_send_message(data):
     sender = data.get("sender")
@@ -280,18 +315,122 @@ def handle_send_message(data):
         db_message = Message(sender=sender, recipient=recipient, encrypted_message=encrypted_msg)
         db.session.add(db_message)
         db.session.commit()
+        message_id = db_message.id # Get the ID of the new message
 
     if recipient in online_users:
         emit("receive_message", {
-            "sender": sender, "message": encrypted_msg, "key": key
+            "id": message_id,
+            "sender": sender, 
+            "message": encrypted_msg, 
+            "key": key, 
+            "timestamp": db_message.timestamp.isoformat(),
+            "status": "sent"
         }, room=online_users[recipient])
     
     # Send plaintext back to sender for their own UI
     sender_sid = online_users.get(sender)
     if sender_sid:
         emit("receive_message", {
-            "sender": sender, "message": message, "key": key
+            "id": message_id,
+            "sender": sender, 
+            "message": message, 
+            "key": key, 
+            "timestamp": db_message.timestamp.isoformat(),
+            "status": "sent"
         }, room=sender_sid)
+
+
+@socketio.on("message_delivered")
+def handle_message_delivered(data):
+    message_id = data.get("id")
+    with app.app_context():
+        msg = Message.query.get(message_id)
+        if msg and msg.status == 'sent':
+            msg.status = 'delivered'
+            db.session.commit()
+            
+            # Notify the sender that the message was delivered
+            sender_sid = online_users.get(msg.sender)
+            if sender_sid:
+                emit("message_status_updated", {"id": msg.id, "status": "delivered"}, room=sender_sid)
+
+            # Notify recipient of a new unread message
+            recipient_sid = online_users.get(msg.recipient)
+            if recipient_sid:
+                emit("new_unread_message", {"sender": msg.sender})
+
+
+@socketio.on("edit_message")
+def handle_edit_message(data):
+    message_id = data.get("message_id")
+    username = data.get("username")
+    new_message = data.get("new_message")
+    
+    with app.app_context():
+        msg = Message.query.get(message_id)
+        # Check if the message exists, the user is the sender, and it's within 5 minutes
+        if msg and msg.sender == username and (datetime.utcnow() - msg.timestamp) < timedelta(minutes=5):
+            key = get_shared_key(msg.sender, msg.recipient)
+            msg.encrypted_message = xor_encrypt_decrypt(new_message, key)
+            msg.edited = True
+            db.session.commit()
+
+            # Notify both sender and recipient
+            sender_sid = online_users.get(msg.sender)
+            if sender_sid:
+                emit("message_edited", {
+                    "id": msg.id, "new_message": new_message, "edited": True
+                }, room=sender_sid)
+            
+            recipient_sid = online_users.get(msg.recipient)
+            if recipient_sid:
+                # Re-encrypt for the recipient
+                encrypted_for_recipient = xor_encrypt_decrypt(new_message, key)
+                emit("message_edited", {
+                    "id": msg.id, "new_message": encrypted_for_recipient, "edited": True
+                }, room=recipient_sid)
+
+
+@socketio.on("delete_message")
+def handle_delete_message(data):
+    message_id = data.get("message_id")
+    username = data.get("username")
+    with app.app_context():
+        msg = Message.query.get(message_id)
+        if msg and msg.sender == username:
+            recipient = msg.recipient
+            db.session.delete(msg)
+            db.session.commit()
+            
+            # Notify both sender and recipient that the message was deleted
+            sender_sid = online_users.get(username)
+            if sender_sid:
+                emit("message_deleted", {"id": message_id}, room=sender_sid)
+            recipient_sid = online_users.get(recipient)
+            if recipient_sid:
+                emit("message_deleted", {"id": message_id}, room=recipient_sid)
+
+
+@socketio.on("mark_as_read")
+def handle_mark_as_read(data):
+    reader = data.get("reader")
+    sender = data.get("sender")
+    with app.app_context():
+        Message.query.filter_by(recipient=reader, sender=sender, read=False).update({"read": True})
+        db.session.commit()
+
+
+@socketio.on("typing")
+def handle_typing(data):
+    recipient_sid = online_users.get(data['recipient'])
+    if recipient_sid:
+        emit("user_typing", {"sender": data['sender']}, room=recipient_sid)
+
+@socketio.on("stop_typing")
+def handle_stop_typing(data):
+    recipient_sid = online_users.get(data['recipient'])
+    if recipient_sid:
+        emit("user_stopped_typing", {"sender": data['sender']}, room=recipient_sid)
 
 
 @socketio.on("get_history")
@@ -311,10 +450,24 @@ def handle_get_history(data):
     for msg in messages:
         try:
             decrypted_text = xor_encrypt_decrypt(msg.encrypted_message, key)
-            history.append({"sender": msg.sender, "message": decrypted_text})
+            history.append({
+                "id": msg.id,
+                "sender": msg.sender, 
+                "message": decrypted_text, 
+                "timestamp": msg.timestamp.isoformat(),
+                "status": msg.status,
+                "edited": msg.edited
+            })
         except Exception as e:
             print(f"Error decrypting message {msg.id}: {e}")
-            history.append({"sender": msg.sender, "message": "[Decryption Error]"})
+            history.append({
+                "id": msg.id,
+                "sender": msg.sender, 
+                "message": "[Decryption Error]", 
+                "timestamp": msg.timestamp.isoformat(),
+                "status": msg.status,
+                "edited": msg.edited
+            })
 
     emit("chat_history", {"history": history, "key": key})
 

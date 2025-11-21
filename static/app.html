@@ -231,6 +231,16 @@
             box-shadow: 0 0 8px rgba(255, 255, 255, 0.8);
         }
 
+        .unread-badge {
+            background-color: #ef4444;
+            color: white;
+            border-radius: 50%;
+            padding: 2px 6px;
+            font-size: 0.7rem;
+            margin-left: auto;
+            font-weight: bold;
+        }
+
         #chat-window {
             flex: 1;
             display: none;
@@ -332,6 +342,61 @@
             margin: 0;
         }
 
+        .message-timestamp {
+            font-size: 0.7rem;
+            color: #a1a1aa;
+            margin-top: 4px;
+            text-align: right;
+            opacity: 0.8;
+        }
+
+        .message.sent .message-timestamp {
+            color: #d4d4d8;
+        }
+
+        .message-status {
+            font-size: 0.8rem;
+            margin-left: 8px;
+        }
+
+        .delete-btn {
+            background: none;
+            border: none;
+            color: #fafafa;
+            cursor: pointer;
+            margin-left: 10px;
+            font-weight: bold;
+            opacity: 0.5;
+            transition: opacity 0.2s;
+        }
+
+        .delete-btn:hover {
+            opacity: 1;
+        }
+
+        .edit-btn {
+            background: none;
+            border: none;
+            color: #fafafa;
+            cursor: pointer;
+            margin-left: 10px;
+            font-size: 0.9rem;
+            opacity: 0.5;
+            transition: opacity 0.2s;
+            padding: 0;
+            vertical-align: middle;
+        }
+
+        .edit-btn:hover {
+            opacity: 1;
+        }
+
+        .edited-marker {
+            font-size: 0.7rem;
+            opacity: 0.8;
+            margin-left: 4px;
+        }
+
         #welcome {
             text-align: center;
             color: #71717a;
@@ -387,6 +452,14 @@
             box-shadow: 0 10px 30px rgba(102, 126, 234, 0.4);
         }
 
+        #typing-indicator {
+            height: 20px;
+            padding: 0 24px;
+            font-style: italic;
+            color: #71717a;
+            font-size: 0.9rem;
+        }
+
         @media (max-width: 768px) {
             .container {
                 width: 100vw;
@@ -427,6 +500,7 @@
             let username = null;
             let currentRecipient = null;
             const sharedKeys = {};
+            let unreadCounts = {};
 
             const byId = (id) => document.getElementById(id);
 
@@ -442,6 +516,7 @@
                     const data = await response.json();
                     if (data.logged_in) {
                         console.log("Found existing session for:", data.username);
+                        Notification.requestPermission(); // Request notification permission on login
                         startChatSession(data.username);
                         return true;
                     }
@@ -474,9 +549,10 @@
                 }
             }
 
-            function appendMessage(sender, message) {
+            function appendMessage(sender, message, timestamp, msgId, status, edited) {
                 const msgDiv = document.createElement("div");
                 msgDiv.className = "message " + (sender === username ? "sent" : "received");
+                msgDiv.dataset.msgId = msgId;
 
                 const senderSpan = document.createElement("span");
                 senderSpan.className = "sender-name";
@@ -485,8 +561,58 @@
                 const msgContent = document.createElement("p");
                 msgContent.textContent = message;
 
+                const timeAndStatus = document.createElement("div");
+                timeAndStatus.className = "message-timestamp";
+                
+                const timeSpan = document.createElement("span");
+                timeSpan.textContent = new Date(timestamp).toLocaleTimeString([], {
+                    hour: '2-digit',
+                    minute: '2-digit'
+                });
+                timeAndStatus.appendChild(timeSpan);
+
+                if (edited) {
+                    const editedSpan = document.createElement("span");
+                    editedSpan.className = "edited-marker";
+                    editedSpan.textContent = "(edited)";
+                    timeAndStatus.appendChild(editedSpan);
+                }
+
+                if (sender === username) {
+                    const statusSpan = document.createElement("span");
+                    statusSpan.className = "message-status";
+                    statusSpan.textContent = status === 'delivered' ? '✓✓' : '✓';
+                    timeAndStatus.appendChild(statusSpan);
+
+                    const editBtn = document.createElement("button");
+                    editBtn.className = "edit-btn";
+                    editBtn.innerHTML = "✏️";
+                    editBtn.onclick = () => {
+                        const newMessage = prompt("Edit your message:", message);
+                        if (newMessage && newMessage.trim() !== "" && newMessage.trim() !== message) {
+                            socket.emit("edit_message", {
+                                "message_id": msgId,
+                                "username": username,
+                                "new_message": newMessage.trim()
+                            });
+                        }
+                    };
+                    timeAndStatus.appendChild(editBtn);
+
+                    const deleteBtn = document.createElement("button");
+                    deleteBtn.className = "delete-btn";
+                    deleteBtn.innerHTML = "&times;";
+                    deleteBtn.onclick = () => {
+                        if (confirm("Delete this message?")) {
+                            socket.emit("delete_message", { "message_id": msgId, "username": username });
+                        }
+                    };
+                    timeAndStatus.appendChild(deleteBtn);
+                }
+                
                 msgDiv.appendChild(senderSpan);
                 msgDiv.appendChild(msgContent);
+                msgDiv.appendChild(timeAndStatus);
 
                 const messagesContainer = byId("messages");
                 messagesContainer.appendChild(msgDiv);
@@ -548,6 +674,17 @@
                 statusEl.classList.remove("hidden");
             }
 
+            let typingTimeout = null;
+
+            function onTyping() {
+                if (!currentRecipient) return;
+                clearTimeout(typingTimeout);
+                socket.emit("typing", { sender: username, recipient: currentRecipient });
+                typingTimeout = setTimeout(() => {
+                    socket.emit("stop_typing", { sender: username, recipient: currentRecipient });
+                }, 3000); // Consider user stopped typing after 3 seconds of inactivity
+            }
+
             function sendMessage() {
                 const input = byId("messageInput");
                 const text = input.value.trim();
@@ -559,12 +696,17 @@
                     });
                     input.value = "";
                     input.focus();
+                    // Stop typing indicator on send
+                    clearTimeout(typingTimeout);
+                    socket.emit("stop_typing", { sender: username, recipient: currentRecipient });
                 }
             }
 
             function handleKey(event) {
                 if (event.key === "Enter") {
                     sendMessage();
+                } else {
+                    onTyping();
                 }
             }
 
@@ -619,6 +761,16 @@
                     const li = document.createElement("li");
                     li.textContent = user;
                     if (user === currentRecipient) li.classList.add("active");
+
+                    const unreadBadge = document.createElement("span");
+                    unreadBadge.className = "unread-badge";
+                    if (unreadCounts[user]) {
+                        unreadBadge.textContent = unreadCounts[user];
+                    } else {
+                        unreadBadge.classList.add("hidden");
+                    }
+                    li.appendChild(unreadBadge);
+                    
                     li.onclick = () => {
                         if (currentRecipient === user) return;
                         currentRecipient = user;
@@ -628,6 +780,12 @@
                         byId("messages").innerHTML = "";
                         byId("chat-window").style.display = "flex";
                         socket.emit("get_history", { user1: username, user2: currentRecipient });
+                        
+                        // Mark messages as read
+                        socket.emit("mark_as_read", { reader: username, sender: currentRecipient });
+                        unreadCounts[user] = 0;
+                        unreadBadge.textContent = "";
+                        unreadBadge.classList.add("hidden");
                     };
                     userList.appendChild(li);
                 });
@@ -646,7 +804,7 @@
                     if (!history.length) {
                         messagesEl.innerHTML = "<p id='welcome'>No messages yet. Say hi! 👋</p>";
                     } else {
-                        history.forEach((msg) => appendMessage(msg.sender, msg.message));
+                        history.forEach((msg) => appendMessage(msg.sender, msg.message, msg.timestamp, msg.id, msg.status, msg.edited));
                     }
                 }
             });
@@ -667,10 +825,96 @@
                 if (data.sender !== username) {
                     const key = sharedKeys[data.sender];
                     displayMsg = xorCipher(data.message, key);
+                    // When a message is received, notify the server it's delivered
+                    socket.emit("message_delivered", { id: data.id });
+                    // Play notification sound
+                    byId("notification-sound").play().catch(e => console.log("Audio play failed:", e));
+                    // Show browser notification
+                    if (Notification.permission === "granted" && !document.hasFocus()) {
+                        new Notification(`New message from ${data.sender}`, {
+                            body: displayMsg,
+                            icon: "/app.ico" // Optional: add an icon
+                        });
+                    }
                 }
 
                 if (data.sender === currentRecipient || (data.sender === username && partner === currentRecipient)) {
-                    appendMessage(data.sender, displayMsg);
+                    appendMessage(data.sender, displayMsg, data.timestamp, data.id, data.status, false);
+                }
+            });
+
+            socket.on("message_status_updated", (data) => {
+                const msgElement = document.querySelector(`.message[data-msg-id='${data.id}']`);
+                if (msgElement) {
+                    const statusElement = msgElement.querySelector(".message-status");
+                    if (statusElement) {
+                        statusElement.textContent = data.status === 'delivered' ? '✓✓' : '✓';
+                    }
+                }
+            });
+
+            socket.on("unread_counts", (counts) => {
+                unreadCounts = counts;
+                // We'll redraw the user list when it's updated to show the counts
+            });
+
+            socket.on("new_unread_message", (data) => {
+                const sender = data.sender;
+                if (sender !== currentRecipient) {
+                    unreadCounts[sender] = (unreadCounts[sender] || 0) + 1;
+                    const userLi = Array.from(document.querySelectorAll("#userList li")).find(li => li.textContent.startsWith(sender));
+                    if (userLi) {
+                        let badge = userLi.querySelector('.unread-badge');
+                        if (!badge) {
+                            badge = document.createElement('span');
+                            badge.className = 'unread-badge';
+                            userLi.appendChild(badge);
+                        }
+                        badge.textContent = unreadCounts[sender];
+                        badge.classList.remove('hidden');
+                    }
+                }
+            });
+
+            socket.on("message_deleted", (data) => {
+                const msgElement = document.querySelector(`.message[data-msg-id='${data.id}']`);
+                if (msgElement) {
+                    msgElement.remove();
+                }
+            });
+
+            socket.on("message_edited", (data) => {
+                const msgElement = document.querySelector(`.message[data-msg-id='${data.id}']`);
+                if (msgElement) {
+                    let newText = data.new_message;
+                    if (!msgElement.classList.contains('sent')) {
+                        const partner = currentRecipient;
+                        const key = sharedKeys[partner];
+                        newText = xorCipher(data.new_message, key);
+                    }
+
+                    const msgContentEl = msgElement.querySelector("p");
+                    msgContentEl.textContent = newText;
+
+                    const timeAndStatusEl = msgElement.querySelector(".message-timestamp");
+                    if (!timeAndStatusEl.querySelector(".edited-marker")) {
+                        const editedSpan = document.createElement("span");
+                        editedSpan.className = "edited-marker";
+                        editedSpan.textContent = "(edited)";
+                        timeAndStatusEl.insertBefore(editedSpan, timeAndStatusEl.querySelector(".message-status"));
+                    }
+                }
+            });
+
+            socket.on("user_typing", (data) => {
+                if (data.sender === currentRecipient) {
+                    byId("typing-indicator").textContent = `${data.sender} is typing...`;
+                }
+            });
+
+            socket.on("user_stopped_typing", (data) => {
+                if (data.sender === currentRecipient) {
+                    byId("typing-indicator").textContent = "";
                 }
             });
 
@@ -735,6 +979,7 @@
         </div>
 
         <div id="chat-screen">
+            <audio id="notification-sound" src="/static/notification.mp3" preload="auto"></audio>
             <div id="users">
                 <h3 id="current-user-header">Online Users <span id="user-count">(0)</span></h3>
                 <div id="connection-status" class="connection-status hidden">Disconnected</div>
@@ -749,6 +994,7 @@
                 <div id="messages">
                     <p id="welcome">Select a user to start chatting</p>
                 </div>
+                <div id="typing-indicator"></div>
                 <div id="input-area">
                     <input id="messageInput" type="text" placeholder="Type a message..." onkeydown="handleKey(event)">
                     <button type="button" onclick="sendMessage()">Send</button>
