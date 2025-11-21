@@ -550,71 +550,96 @@
             }
 
             function appendMessage(sender, message, timestamp, msgId, status, edited) {
+                // container
                 const msgDiv = document.createElement("div");
                 msgDiv.className = "message " + (sender === username ? "sent" : "received");
-                msgDiv.dataset.msgId = msgId;
+                if (msgId) msgDiv.dataset.msgId = msgId;
 
+                // sender label
                 const senderSpan = document.createElement("span");
                 senderSpan.className = "sender-name";
                 senderSpan.textContent = sender;
 
-                const msgContent = document.createElement("p");
-                msgContent.textContent = message;
+                // attempt decryption if a shared key exists
+                let displayText = message || "";
+                try {
+                    const keyForSender = sharedKeys[sender] || sharedKeys[currentRecipient];
+                    if (keyForSender && typeof displayText === 'string') {
+                        // only attempt decrypt when key is a binary-like string
+                        if (/^[01]+$/.test(keyForSender) && displayText.length > 0) {
+                            displayText = xorCipher(displayText, keyForSender);
+                        }
+                    }
+                } catch (e) {
+                    console.warn('Decryption failed:', e);
+                }
 
+                const msgContent = document.createElement("p");
+                msgContent.textContent = displayText;
+
+                // timestamp and controls
                 const timeAndStatus = document.createElement("div");
                 timeAndStatus.className = "message-timestamp";
-                
+
+                // normalize timestamp: accept number (ms), ISO string, or undefined
+                let ts = Date.now();
+                try {
+                    if (timestamp) {
+                        const n = Number(timestamp);
+                        if (Number.isFinite(n) && n > 0) ts = n;
+                        else {
+                            const parsed = new Date(timestamp).getTime();
+                            if (Number.isFinite(parsed) && parsed > 0) ts = parsed;
+                        }
+                    }
+                } catch (_) { ts = Date.now(); }
+
                 const timeSpan = document.createElement("span");
-                timeSpan.textContent = new Date(timestamp).toLocaleTimeString([], {
-                    hour: '2-digit',
-                    minute: '2-digit'
-                });
+                timeSpan.textContent = new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
                 timeAndStatus.appendChild(timeSpan);
 
                 if (edited) {
                     const editedSpan = document.createElement("span");
                     editedSpan.className = "edited-marker";
-                    editedSpan.textContent = "(edited)";
+                    editedSpan.textContent = " (edited)";
                     timeAndStatus.appendChild(editedSpan);
                 }
 
                 if (sender === username) {
                     const statusSpan = document.createElement("span");
                     statusSpan.className = "message-status";
-                    statusSpan.textContent = status === 'delivered' ? '✓✓' : '✓';
+                    statusSpan.textContent = status === 'delivered' ? ' ✓✓' : ' ✓';
                     timeAndStatus.appendChild(statusSpan);
 
                     const editBtn = document.createElement("button");
                     editBtn.className = "edit-btn";
-                    editBtn.innerHTML = "✏️";
+                    editBtn.type = 'button';
+                    editBtn.textContent = '✏️';
                     editBtn.onclick = () => {
-                        const newMessage = prompt("Edit your message:", message);
-                        if (newMessage && newMessage.trim() !== "" && newMessage.trim() !== message) {
-                            socket.emit("edit_message", {
-                                "message_id": msgId,
-                                "username": username,
-                                "new_message": newMessage.trim()
-                            });
+                        const newMessage = prompt('Edit your message:', displayText);
+                        if (newMessage && newMessage.trim() !== '' && newMessage.trim() !== displayText) {
+                            socket.emit('edit_message', { message_id: msgId, username: username, new_message: newMessage.trim() });
                         }
                     };
                     timeAndStatus.appendChild(editBtn);
 
                     const deleteBtn = document.createElement("button");
                     deleteBtn.className = "delete-btn";
-                    deleteBtn.innerHTML = "&times;";
+                    deleteBtn.type = 'button';
+                    deleteBtn.textContent = '×';
                     deleteBtn.onclick = () => {
-                        if (confirm("Delete this message?")) {
-                            socket.emit("delete_message", { "message_id": msgId, "username": username });
+                        if (confirm('Delete this message?')) {
+                            socket.emit('delete_message', { message_id: msgId, username: username });
                         }
                     };
                     timeAndStatus.appendChild(deleteBtn);
                 }
-                
+
                 msgDiv.appendChild(senderSpan);
                 msgDiv.appendChild(msgContent);
                 msgDiv.appendChild(timeAndStatus);
 
-                const messagesContainer = byId("messages");
+                const messagesContainer = byId('messages');
                 messagesContainer.appendChild(msgDiv);
                 messagesContainer.scrollTop = messagesContainer.scrollHeight;
             }
@@ -816,30 +841,29 @@
             });
 
             socket.on("receive_message", (data) => {
+                // determine conversation partner (who this message belongs to)
                 const partner = data.sender === username ? currentRecipient : data.sender;
-                if (partner && data.key) {
-                    sharedKeys[partner] = data.key;
-                }
 
-                let displayMsg = data.message;
+                // update shared key if provided by server
+                if (partner && data.key) sharedKeys[partner] = data.key;
+
+                // display raw payload; appendMessage will attempt decryption if key exists
+                const displayMsg = data.message || "";
+
+                // if it's an incoming message from other user, mark delivered and notify
                 if (data.sender !== username) {
-                    const key = sharedKeys[data.sender];
-                    displayMsg = xorCipher(data.message, key);
-                    // When a message is received, notify the server it's delivered
-                    socket.emit("message_delivered", { id: data.id });
-                    // Play notification sound
+                    try { socket.emit("message_delivered", { id: data.id }); } catch (e) {}
                     byId("notification-sound").play().catch(e => console.log("Audio play failed:", e));
-                    // Show browser notification
                     if (Notification.permission === "granted" && !document.hasFocus()) {
-                        new Notification(`New message from ${data.sender}`, {
-                            body: displayMsg,
-                            icon: "/app.ico" // Optional: add an icon
-                        });
+                        try {
+                            new Notification(`New message from ${data.sender}`, { body: typeof displayMsg === 'string' ? displayMsg : '', icon: '/app.ico' });
+                        } catch (e) { /* ignore notification errors */ }
                     }
                 }
 
-                if (data.sender === currentRecipient || (data.sender === username && partner === currentRecipient)) {
-                    appendMessage(data.sender, displayMsg, data.timestamp, data.id, data.status, false);
+                // append only if this message belongs to the active conversation
+                if (partner && (data.sender === currentRecipient || (data.sender === username && partner === currentRecipient))) {
+                    appendMessage(data.sender, displayMsg, data.timestamp, data.id, data.status, !!data.edited);
                 }
             });
 
