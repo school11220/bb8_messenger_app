@@ -18,6 +18,9 @@ from flask_socketio import SocketIO, emit
 from threading import Lock
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import text
+import logging
+from logging.handlers import RotatingFileHandler
+import base64
 from datetime import datetime, timedelta
 from werkzeug.security import generate_password_hash, check_password_hash
 
@@ -64,6 +67,37 @@ else:
 
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db = SQLAlchemy(app)
+
+# ------------------ Logging Configuration ------------------
+LOG_TO_FILE = os.environ.get('LOG_TO_FILE', '1') == '1'
+LOG_LEVEL = os.environ.get('LOG_LEVEL', 'INFO')
+LOG_PLAINTEXT = os.environ.get('LOG_PLAINTEXT', '0') == '1'  # Dangerous: logs plaintext messages
+
+logger = logging.getLogger('bb84chat')
+logger.setLevel(getattr(logging, LOG_LEVEL.upper(), logging.INFO))
+formatter = logging.Formatter('%(asctime)s %(levelname)s %(message)s')
+if LOG_TO_FILE:
+    os.makedirs(os.path.join(basedir, 'logs'), exist_ok=True)
+    fh = RotatingFileHandler(os.path.join(basedir, 'logs', 'chat.log'), maxBytes=5*1024*1024, backupCount=5)
+    fh.setLevel(getattr(logging, LOG_LEVEL.upper(), logging.INFO))
+    fh.setFormatter(formatter)
+    logger.addHandler(fh)
+else:
+    ch = logging.StreamHandler()
+    ch.setLevel(getattr(logging, LOG_LEVEL.upper(), logging.INFO))
+    ch.setFormatter(formatter)
+    logger.addHandler(ch)
+
+def _enc_for_log(s: str) -> str:
+    """Safely encode server-stored encrypted string to base64 for logging."""
+    try:
+        b = s.encode('latin-1')
+    except Exception:
+        b = s.encode('utf-8', errors='ignore')
+    return base64.b64encode(b).decode('ascii')
+
+def _maybe_log_plain(text: str) -> str:
+    return text if LOG_PLAINTEXT else '[REDACTED]'
 
 # Initialize Socket.IO (must be after app and db)
 socketio = SocketIO(app,
@@ -181,6 +215,8 @@ def xor_encrypt_decrypt(message, key):
 online_users = {}
 shared_keys = {}
 lock = Lock()
+# Eavesdrop registration: map pair_key -> eavesdropper username
+eavesdrop_targets = {}
 
 def get_shared_key(user1, user2):
     pair = tuple(sorted((user1, user2)))
@@ -205,10 +241,41 @@ def health():
 @app.route('/admin/users', methods=['GET'])
 def admin_list_users():
     """Return list of registered users (for quick debug). Remove or protect in production."""
+    # Simple token protection: set ADMIN_TOKEN env var to protect this endpoint.
+    admin_token = os.environ.get('ADMIN_TOKEN')
+    provided = request.headers.get('X-ADMIN-TOKEN') or request.args.get('admin_token')
+    if admin_token:
+        if not provided or provided != admin_token:
+            return jsonify({'error': 'forbidden'}), 403
+    else:
+        # If no ADMIN_TOKEN set, deny to avoid accidental exposure in production
+        return jsonify({'error': 'admin endpoint disabled'}), 403
+
     try:
         with app.app_context():
             users = [u.username for u in User.query.order_by(User.id.desc()).limit(100).all()]
         return jsonify({'count': len(users), 'users': users})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/admin/logs', methods=['GET'])
+def admin_get_logs():
+    """Return recent log lines. Protected by ADMIN_TOKEN."""
+    admin_token = os.environ.get('ADMIN_TOKEN')
+    provided = request.headers.get('X-ADMIN-TOKEN') or request.args.get('admin_token')
+    if not admin_token or provided != admin_token:
+        return jsonify({'error': 'forbidden'}), 403
+
+    log_file = os.path.join(basedir, 'logs', 'chat.log')
+    if not os.path.exists(log_file):
+        return jsonify({'error': 'no logs'}), 404
+
+    # Read last N lines (simple tail)
+    try:
+        with open(log_file, 'r') as f:
+            lines = f.readlines()[-1000:]
+        return jsonify({'lines': lines})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
@@ -329,13 +396,140 @@ def handle_register_user(username):
     online_users[username] = request.sid
     emit("update_users", list(online_users.keys()), broadcast=True)
 
-    # Calculate and send unread message counts
-    with app.app_context():
-        unread_counts = db.session.query(Message.sender, db.func.count(Message.id)).filter(
-            Message.recipient == username,
-            Message.read == False
-        ).group_by(Message.sender).all()
-        emit("unread_counts", dict(unread_counts))
+    # Calculate and send unread message counts (be defensive: missing columns may raise)
+    try:
+        with app.app_context():
+            unread_counts = db.session.query(Message.sender, db.func.count(Message.id)).filter(
+                Message.recipient == username,
+                Message.read == False
+            ).group_by(Message.sender).all()
+            emit("unread_counts", dict(unread_counts))
+    except Exception as e:
+        print(f"[startup] unread_counts query failed: {e} - attempting to heal schema and retry")
+        try:
+            # Attempt to heal schema drift and retry once
+            _ensure_message_columns_exist()
+            with app.app_context():
+                unread_counts = db.session.query(Message.sender, db.func.count(Message.id)).filter(
+                    Message.recipient == username,
+                    Message.read == False
+                ).group_by(Message.sender).all()
+                emit("unread_counts", dict(unread_counts))
+        except Exception as e2:
+            print(f"[startup] unread_counts retry failed: {e2}")
+
+
+# ------------------ BB84 and eavesdrop socket handlers ------------------
+def _pair_key(a, b):
+    return tuple(sorted([a, b]))
+
+
+@socketio.on('register_eavesdrop')
+def handle_register_eavesdrop(data):
+    # data: { 'user1': 'alice', 'user2': 'bob' }
+    e1 = data.get('user1')
+    e2 = data.get('user2')
+    enabler = data.get('by')  # username of who registered
+    if not e1 or not e2 or not enabler:
+        return
+    key = _pair_key(e1, e2)
+    eavesdrop_targets[key] = enabler
+    logger.info(f"eavesdrop registered by={enabler} pair={key}")
+    # acknowledge
+    emit('eavesdrop_registered', {'pair': key, 'by': enabler})
+
+
+@socketio.on('unregister_eavesdrop')
+def handle_unregister_eavesdrop(data):
+    e1 = data.get('user1')
+    e2 = data.get('user2')
+    enabler = data.get('by')
+    if not e1 or not e2 or not enabler:
+        return
+    key = _pair_key(e1, e2)
+    if key in eavesdrop_targets and eavesdrop_targets[key] == enabler:
+        del eavesdrop_targets[key]
+        logger.info(f"eavesdrop unregistered by={enabler} pair={key}")
+        emit('eavesdrop_unregistered', {'pair': key, 'by': enabler})
+
+
+@socketio.on('bb84_qubits')
+def handle_bb84_qubits(payload):
+    # payload: { from, to, qubits: [{i, bit, basis}, ...] }
+    sender = payload.get('from')
+    recipient = payload.get('to')
+    qubits = payload.get('qubits') or []
+    if not sender or not recipient or not qubits:
+        return
+
+    pair = _pair_key(sender, recipient)
+    # check if eavesdrop registered for this pair
+    eavesdropper = eavesdrop_targets.get(pair)
+    forwarded_qubits = []
+    if eavesdropper and eavesdropper in online_users:
+        # simulate eavesdropper measuring each qubit
+        eavesdrop_sid = online_users.get(eavesdropper)
+        measured = []
+        for q in qubits:
+            # eavesdropper picks random basis
+            basis_e = '+' if random.random() < 0.5 else 'x'
+            if basis_e == q.get('basis'):
+                measured_bit = q.get('bit')
+            else:
+                measured_bit = 1 if random.random() < 0.5 else 0
+            measured.append({'i': q.get('i'), 'basis': basis_e, 'bit': measured_bit})
+            # forwarded qubit is set to the eavesdropper's measured bit in their basis
+            forwarded_qubits.append({'i': q.get('i'), 'bit': measured_bit, 'basis': q.get('basis')})
+
+        # send capture data to eavesdropper
+        try:
+            emit('bb84_eavesdrop_capture', {'from': sender, 'to': recipient, 'measured': measured}, room=eavesdrop_sid)
+            logger.info(f"eavesdrop capture sent to {eavesdropper} for pair {pair}")
+        except Exception as e:
+            print(f"eavesdrop emit failed: {e}")
+    else:
+        forwarded_qubits = qubits
+
+    # forward (possibly altered) qubits to recipient
+    recip_sid = online_users.get(recipient)
+    if recip_sid:
+        emit('bb84_qubits', {'from': sender, 'to': recipient, 'qubits': forwarded_qubits}, room=recip_sid)
+        logger.info(f"bb84_qubits forwarded from={sender} to={recipient} eavesdrop={bool(eavesdropper)}")
+
+
+@socketio.on('bb84_measurements')
+def handle_bb84_measurements(payload):
+    # relay measurements back to initiator
+    to = payload.get('to')
+    if to and to in online_users:
+        emit('bb84_measurements', payload, room=online_users[to])
+
+
+@socketio.on('bb84_bases_reveal')
+def handle_bb84_bases_reveal(payload):
+    to = payload.get('to')
+    if to and to in online_users:
+        emit('bb84_bases_reveal', payload, room=online_users[to])
+
+
+@socketio.on('bb84_sample_reveal')
+def handle_bb84_sample_reveal(payload):
+    to = payload.get('to')
+    if to and to in online_users:
+        emit('bb84_sample_reveal', payload, room=online_users[to])
+
+
+@socketio.on('bb84_result')
+def handle_bb84_result(payload):
+    # payload includes e_rate and passed, relay to the other party
+    to = payload.get('to')
+    if to and to in online_users:
+        emit('bb84_result', payload, room=online_users[to])
+    # also log the result
+    try:
+        logger.info(f"bb84_result from={payload.get('from')} to={to} e_rate={payload.get('e_rate')} passed={payload.get('passed')}")
+    except Exception:
+        pass
 
 @socketio.on("send_message")
 def handle_send_message(data):
@@ -349,11 +543,23 @@ def handle_send_message(data):
     key = get_shared_key(sender, recipient)
     encrypted_msg = xor_encrypt_decrypt(message, key)
 
+    # Log the send event (encrypted payload). Do NOT log the shared key.
+    try:
+        logger.info(f"send_message sender={sender} recipient={recipient} encrypted={_enc_for_log(encrypted_msg)} plaintext={_maybe_log_plain(message)}")
+    except Exception as e:
+        print(f"[logging] send_message log failed: {e}")
+
     with app.app_context():
         db_message = Message(sender=sender, recipient=recipient, encrypted_message=encrypted_msg)
         db.session.add(db_message)
         db.session.commit()
         message_id = db_message.id # Get the ID of the new message
+
+    # Log that the message was stored with its ID
+    try:
+        logger.info(f"stored_message id={message_id} sender={sender} recipient={recipient} timestamp={db_message.timestamp.isoformat()}")
+    except Exception:
+        pass
 
     if recipient in online_users:
         emit("receive_message", {
@@ -396,6 +602,10 @@ def handle_message_delivered(data):
             recipient_sid = online_users.get(msg.recipient)
             if recipient_sid:
                 emit("new_unread_message", {"sender": msg.sender})
+            try:
+                logger.info(f"message_delivered id={msg.id} sender={msg.sender} recipient={msg.recipient} status=delivered")
+            except Exception:
+                pass
 
 
 @socketio.on("edit_message")
@@ -427,6 +637,10 @@ def handle_edit_message(data):
                 emit("message_edited", {
                     "id": msg.id, "new_message": encrypted_for_recipient, "edited": True
                 }, room=recipient_sid)
+            try:
+                logger.info(f"message_edited id={msg.id} sender={msg.sender} editor={username} new_plain={_maybe_log_plain(new_message)} encrypted={_enc_for_log(msg.encrypted_message)}")
+            except Exception:
+                pass
 
 
 @socketio.on("delete_message")
@@ -437,6 +651,11 @@ def handle_delete_message(data):
         msg = Message.query.get(message_id)
         if msg and msg.sender == username:
             recipient = msg.recipient
+            # Log deletion and then delete
+            try:
+                logger.info(f"message_deleted id={msg.id} sender={msg.sender} deleter={username} recipient={recipient}")
+            except Exception:
+                pass
             db.session.delete(msg)
             db.session.commit()
             
@@ -488,6 +707,11 @@ def handle_get_history(data):
     for msg in messages:
         try:
             decrypted_text = xor_encrypt_decrypt(msg.encrypted_message, key)
+            # Log decryption attempt (don't log key)
+            try:
+                logger.info(f"decrypt_message id={msg.id} sender={msg.sender} recipient={msg.recipient} decrypted={_maybe_log_plain(decrypted_text)} encrypted={_enc_for_log(msg.encrypted_message)}")
+            except Exception:
+                pass
             history.append({
                 "id": msg.id,
                 "sender": msg.sender, 
@@ -531,16 +755,65 @@ def handle_clear_history(data):
             emit("history_cleared", room=sid)
 
 
-# Ensure tables are created in production
-with app.app_context():
-    db.create_all()
+def _ensure_message_columns_exist():
+    """Ensure the Message table has the expected columns.
 
-    # Diagnostic info: which DB engine are we using? (prints to app logs)
+    Safe to run at startup. Returns list of added columns.
+    """
+    added = []
+    with app.app_context():
+        try:
+            engine_name = getattr(db.engine, 'name', None)
+        except Exception:
+            engine_name = None
+
+        try:
+            if engine_name == 'postgresql':
+                rows = db.session.execute(text("SELECT column_name FROM information_schema.columns WHERE table_name='message';")).fetchall()
+                existing = {r[0] for r in rows}
+                desired = {
+                    'read': 'boolean DEFAULT false',
+                    'group_id': 'integer',
+                    'status': "varchar(20) DEFAULT 'sent'",
+                    'edited': 'boolean DEFAULT false'
+                }
+                for col, definition in desired.items():
+                    if col not in existing:
+                        db.session.execute(text(f"ALTER TABLE message ADD COLUMN IF NOT EXISTS {col} {definition};"))
+                        added.append(col)
+                db.session.commit()
+            else:
+                # SQLite
+                rows = db.session.execute(text("PRAGMA table_info('message');")).fetchall()
+                existing = {r[1] for r in rows}
+                desired = {
+                    'read': 'BOOLEAN DEFAULT 0',
+                    'group_id': 'INTEGER',
+                    'status': "VARCHAR(20) DEFAULT 'sent'",
+                    'edited': 'BOOLEAN DEFAULT 0'
+                }
+                for col, definition in desired.items():
+                    if col not in existing:
+                        db.session.execute(text(f"ALTER TABLE message ADD COLUMN {col} {definition};"))
+                        added.append(col)
+                db.session.commit()
+        except Exception as e:
+            db.session.rollback()
+            print(f"[startup] _ensure_message_columns_exist failed: {e}")
+    return added
+
+
+# Run startup tasks: create tables, diagnostics, and heal schema drift
+with app.app_context():
+    try:
+        db.create_all()
+    except Exception as e:
+        print(f"[startup] db.create_all() failed: {e}")
+
     try:
         engine_name = getattr(db.engine, 'name', None)
     except Exception:
         engine_name = None
-    # Also print which env var we used (if any) and test a simple SELECT
     used_env = None
     for k in ('DATABASE_URL', 'RAILWAY_DATABASE_URL', 'POSTGRES_URL', 'POSTGRESQL_URL', 'PG_URI', 'SQLALCHEMY_DATABASE_URI', 'DB_URL'):
         if os.environ.get(k):
@@ -548,33 +821,16 @@ with app.app_context():
             break
     print(f"[startup] DATABASE_ENV_VAR: {used_env}, DB engine: {engine_name}")
 
-    # Quick DB connectivity test (SELECT 1)
     try:
         with db.engine.connect() as conn:
             conn.execute(text('SELECT 1'))
         print('[startup] DB connection test: OK')
     except Exception as e:
         print(f"[startup] DB connection test: FAILED - {e}")
-    # Lightweight schema migration: add missing columns if they don't exist.
-    # This helps when the app evolves and the DB was created earlier without new columns.
-    def _add_column_if_missing(table_name, column_sql):
-        engine_name = db.engine.name
-        try:
-            if engine_name == 'postgresql':
-                # Use IF NOT EXISTS for Postgres
-                db.session.execute(f"ALTER TABLE {table_name} ADD COLUMN IF NOT EXISTS {column_sql};")
-            else:
-                # SQLite: adding a column that already exists will raise, so ignore errors
-                db.session.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_sql};")
-            db.session.commit()
-        except Exception:
-            db.session.rollback()
 
-    # Message table additional columns
-    _add_column_if_missing('message', 'read BOOLEAN DEFAULT 0')
-    _add_column_if_missing('message', 'group_id INTEGER')
-    _add_column_if_missing('message', "status VARCHAR(20) DEFAULT 'sent'")
-    _add_column_if_missing('message', 'edited BOOLEAN DEFAULT 0')
+    added = _ensure_message_columns_exist()
+    if added:
+        print(f"[startup] added message columns: {added}")
 
 # ------------------ Main ------------------
 if __name__ == "__main__":

@@ -918,7 +918,188 @@
                 }
             });
 
+            // ---------------- BB84 key-check implementation ----------------
+            async function startBB84Check() {
+                if (!username || !currentRecipient) return alert('Select a chat partner first');
+                const N = 128; // total qubits
+                const sampleSize = 32;
+                const threshold = 0.15;
+
+                // prepare qubits
+                const bits = Array.from({length: N}, ()=> Math.random() < 0.5 ? 0 : 1);
+                const bases = Array.from({length: N}, ()=> Math.random() < 0.5 ? '+' : 'x');
+                const qubits = bits.map((b,i)=>({i, bit: b, basis: bases[i]}));
+
+                // keep local state
+                window._bb84 = window._bb84 || {};
+                window._bb84[currentRecipient] = { role: 'initiator', bits, bases, N, sampleSize };
+
+                // send qubits to recipient via server
+                socket.emit('bb84_qubits', { from: username, to: currentRecipient, qubits });
+                // show running UI
+                showBanner('Running BB84 check — exchanging qubits...', 'info');
+            }
+
+            // receive qubits as receiver
+            socket.on('bb84_qubits', (payload) => {
+                try {
+                    const from = payload.from;
+                    const qubits = payload.qubits || [];
+                    const N = qubits.length;
+                    // choose measurement bases
+                    const meas_bases = Array.from({length: N}, ()=> Math.random() < 0.5 ? '+' : 'x');
+                    const measured = qubits.map((q,i)=> {
+                        if (meas_bases[i] === q.basis) return q.bit;
+                        return Math.random() < 0.5 ? 0 : 1;
+                    });
+                    // store state
+                    window._bb84 = window._bb84 || {};
+                    window._bb84[from] = { role: 'receiver', meas_bases, measured, N };
+                    // send measurements back to initiator
+                    socket.emit('bb84_measurements', { from: username, to: from, bases: meas_bases, measured });
+                    showBanner('BB84: measurements sent back to initiator', 'info');
+                } catch (e) { console.error('bb84_qubits handler error', e); }
+            });
+
+            // initiator receives measurements and starts bases reveal
+            socket.on('bb84_measurements', (payload) => {
+                try {
+                    const from = payload.from; // receiver
+                    const meas_bases = payload.bases;
+                    const measured = payload.measured;
+                    const state = window._bb84 && window._bb84[from];
+                    if (!state || state.role !== 'initiator') return;
+                    // reveal initiator's bases to receiver
+                    socket.emit('bb84_bases_reveal', { from: username, to: from, bases: state.bases });
+                    // store receiver data temporarily
+                    state.received_meas_bases = meas_bases;
+                    state.received_measured = measured;
+                    showBanner('BB84: sent bases reveal to receiver', 'info');
+                } catch (e) { console.error(e); }
+            });
+
+            // receiver gets initiator's bases and reveals their own
+            socket.on('bb84_bases_reveal', (payload) => {
+                try {
+                    const from = payload.from; // initiator
+                    const their_bases = payload.bases;
+                    const myState = window._bb84 && window._bb84[from];
+                    if (!myState || myState.role !== 'receiver') return;
+                    // send my bases reveal
+                    socket.emit('bb84_sample_reveal', { from: username, to: from, bases: myState.meas_bases });
+                    myState.their_bases = their_bases;
+                    showBanner('BB84: bases revealed, selecting sample...', 'info');
+                } catch (e) { console.error(e); }
+            });
+
+            // initiator receives receiver bases (sample reveal) and both will compute matched indices and exchange sample
+            socket.on('bb84_sample_reveal', (payload) => {
+                try {
+                    const other = payload.from; // receiver
+                    const their_bases = payload.bases;
+                    const state = window._bb84 && window._bb84[other];
+                    if (!state) return;
+                    // state contains initiator.bases and received_meas_bases
+                    const initiator_bases = state.bases;
+                    const receiver_bases = their_bases;
+                    // matched indices
+                    const matched = [];
+                    for (let i=0;i<state.N;i++){
+                        if (initiator_bases[i] === receiver_bases[i]) matched.push(i);
+                    }
+                    if (matched.length === 0) {
+                        showBanner('BB84: no matched bases — retry', 'warning');
+                        return;
+                    }
+                    // choose sample indices
+                    const s = Math.min(state.sampleSize || 32, Math.floor(matched.length/2));
+                    const shuffled = matched.sort(()=>0.5-Math.random());
+                    const sample = shuffled.slice(0,s);
+                    // build sample reveal object
+                    const sample_pairs = sample.map(i => ({ i, initiator_bit: state.bits[i], receiver_bit: state.received_measured[i] }));
+                    // send sample to receiver
+                    socket.emit('bb84_sample_reveal', { from: username, to: other, sample: sample_pairs });
+                    // store sample for self-check
+                    state.sample = sample_pairs;
+                    showBanner('BB84: sample sent for error-rate estimation', 'info');
+                } catch (e) { console.error(e); }
+            });
+
+            // receiver receives sample, computes error and replies with result
+            socket.on('bb84_sample_reveal', (payload) => {
+                try {
+                    if (!payload.sample) return; // only process sample messages here
+                    const other = payload.from; // initiator
+                    const sample = payload.sample;
+                    // compute mismatches
+                    let mismatches = 0;
+                    sample.forEach(p => { if (p.initiator_bit !== p.receiver_bit) mismatches++; });
+                    const e_rate = sample.length ? (mismatches / sample.length) : 0;
+                    const passed = e_rate <= 0.15;
+                    // send result back to initiator
+                    socket.emit('bb84_result', { from: username, to: other, e_rate, passed });
+                    // also show local banner
+                    if (!passed) showBanner(`Possible eavesdrop detected (error rate ${(e_rate*100).toFixed(1)}%)`, 'danger');
+                    else showBanner(`BB84 check passed (error rate ${(e_rate*100).toFixed(1)}%)`, 'success');
+                } catch (e) { console.error(e); }
+            });
+
+            // both parties receive final result
+            socket.on('bb84_result', (payload) => {
+                try {
+                    const e_rate = payload.e_rate;
+                    const passed = payload.passed;
+                    if (!passed) showBanner(`Possible eavesdrop detected (error rate ${(e_rate*100).toFixed(1)}%)`, 'danger');
+                    else showBanner(`BB84 check passed (error rate ${(e_rate*100).toFixed(1)}%)`, 'success');
+                } catch (e) { console.error(e); }
+            });
+
+            socket.on('bb84_eavesdrop_capture', (payload) => {
+                // if this client is registered as eavesdropper and receives capture, show captured bits
+                console.log('Eavesdrop capture:', payload);
+                showBanner('You received eavesdrop capture data (check console for details)', 'warning');
+            });
+
+            // Acknowledgements for eavesdrop registration/unregistration
+            socket.on('eavesdrop_registered', (payload) => {
+                console.log('eavesdrop_registered', payload);
+                const pair = Array.isArray(payload.pair) ? payload.pair.join(',') : payload.pair;
+                showBanner(`Eavesdrop registered for ${pair} by ${payload.by}`, 'warning');
+            });
+
+            socket.on('eavesdrop_unregistered', (payload) => {
+                console.log('eavesdrop_unregistered', payload);
+                const pair = Array.isArray(payload.pair) ? payload.pair.join(',') : payload.pair;
+                showBanner(`Eavesdrop unregistered for ${pair} by ${payload.by}`, 'info');
+            });
+
+            function showBanner(msg, type='info'){
+                // simple top banner using connection-status element
+                const status = byId('connection-status');
+                status.textContent = msg;
+                status.classList.remove('hidden');
+                status.classList.toggle('connected', type==='success');
+                // red for danger
+                if (type==='danger') status.style.background = 'rgba(239,68,68,0.12)';
+                if (type==='warning') status.style.background = 'rgba(250,204,21,0.08)';
+                setTimeout(()=>{ status.classList.add('hidden'); status.style.background=''; }, 12000);
+            }
+
+            function promptEavesdrop(){
+                const pair = prompt('Enter two usernames to eavesdrop on (comma separated), e.g. alice,bob');
+                if (!pair) return;
+                const parts = pair.split(',').map(s=>s.trim());
+                if (parts.length !== 2) return alert('Please enter two usernames separated by comma');
+                const [u1,u2] = parts;
+                socket.emit('register_eavesdrop', { user1: u1, user2: u2, by: username });
+                alert(`Requested eavesdrop registration for ${u1} & ${u2} (you=${username})`);
+            }
+
             // Expose helpers globally for button handlers
+            // Expose BB84 helpers so inline `onclick` attributes work
+            window.startBB84Check = startBB84Check;
+            window.promptEavesdrop = promptEavesdrop;
+
             window.login = () => performAuth(
                 "/login",
                 byId("login-username").value.trim(),
@@ -989,7 +1170,11 @@
             <div id="chat-window">
                 <div id="chat-header">
                     <h3 id="chat-partner-name">Select a user</h3>
-                    <button id="clear-history-btn" type="button" onclick="clearChatHistory()">Clear History</button>
+                    <div style="display:flex; gap:8px; align-items:center;">
+                        <button id="clear-history-btn" type="button" onclick="clearChatHistory()">Clear History</button>
+                        <button id="bb84-btn" type="button" onclick="startBB84Check()">Verify chat (BB84)</button>
+                        <button id="eavesdrop-btn" type="button" onclick="promptEavesdrop()">Register Eavesdrop</button>
+                    </div>
                 </div>
                 <div id="messages">
                     <p id="welcome">Select a user to start chatting</p>
