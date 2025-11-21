@@ -514,6 +514,27 @@ def handle_clear_history(data):
 with app.app_context():
     db.create_all()
 
+    # Lightweight schema migration: add missing columns if they don't exist.
+    # This helps when the app evolves and the DB was created earlier without new columns.
+    def _add_column_if_missing(table_name, column_sql):
+        engine_name = db.engine.name
+        try:
+            if engine_name == 'postgresql':
+                # Use IF NOT EXISTS for Postgres
+                db.session.execute(f"ALTER TABLE {table_name} ADD COLUMN IF NOT EXISTS {column_sql};")
+            else:
+                # SQLite: adding a column that already exists will raise, so ignore errors
+                db.session.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_sql};")
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+
+    # Message table additional columns
+    _add_column_if_missing('message', 'read BOOLEAN DEFAULT 0')
+    _add_column_if_missing('message', 'group_id INTEGER')
+    _add_column_if_missing('message', "status VARCHAR(20) DEFAULT 'sent'")
+    _add_column_if_missing('message', 'edited BOOLEAN DEFAULT 0')
+
 # ------------------ Main ------------------
 if __name__ == "__main__":
     # Use environment variables for production deployment
