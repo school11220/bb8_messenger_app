@@ -517,6 +517,12 @@ def handle_clear_history(data):
 with app.app_context():
     db.create_all()
 
+    # Diagnostic info: which DB engine are we using? (prints to app logs)
+    try:
+        engine_name = getattr(db.engine, 'name', None)
+    except Exception:
+        engine_name = None
+    print(f"[startup] DATABASE_URL provided: {bool(os.environ.get('DATABASE_URL'))}, DB engine: {engine_name}")
     # Lightweight schema migration: add missing columns if they don't exist.
     # This helps when the app evolves and the DB was created earlier without new columns.
     def _add_column_if_missing(table_name, column_sql):
