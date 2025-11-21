@@ -115,3 +115,19 @@
 2025-11-21 12:31:17,176 INFO eavesdrop capture sent to bib for pair ('bib', 'shivam')
 2025-11-21 12:31:17,177 INFO bb84_qubits forwarded from=bib to=shivam eavesdrop=True
 2025-11-21 12:31:17,187 INFO bb84_result from=shivam to=bib e_rate=0.1724137931034483 passed=False
+2025-11-21 14:27:43,486 INFO eavesdrop registered by=eve_1763715459 pair=('alice_1763715459', 'bob_1763715459')
+2025-11-21 14:55:10,957 INFO bb84_qubits forwarded from=hello to=shivam eavesdrop=False
+2025-11-21 14:55:10,975 INFO bb84_result from=shivam to=hello e_rate=0 passed=True
+2025-11-21 14:55:48,096 INFO eavesdrop registered by=hello pair=('hello', 'shivam')
+2025-11-21 14:55:51,294 INFO eavesdrop capture sent to hello for pair ('hello', 'shivam')
+2025-11-21 14:55:51,296 INFO bb84_qubits forwarded from=hello to=shivam eavesdrop=True
+2025-11-21 14:55:51,347 INFO bb84_result from=shivam to=hello e_rate=0.25806451612903225 passed=False
+2025-11-21 14:55:53,257 INFO eavesdrop capture sent to hello for pair ('hello', 'shivam')
+2025-11-21 14:55:53,259 INFO bb84_qubits forwarded from=hello to=shivam eavesdrop=True
+2025-11-21 14:55:53,272 INFO bb84_result from=shivam to=hello e_rate=0.35714285714285715 passed=False
+2025-11-21 15:01:36,728 INFO eavesdrop capture sent to hello for pair ('hello', 'shivam')
+2025-11-21 15:01:36,731 INFO bb84_qubits forwarded from=hello to=shivam eavesdrop=True
+2025-11-21 15:01:36,784 INFO bb84_result from=shivam to=hello e_rate=0.2903225806451613 passed=False
+2025-11-21 15:01:38,074 INFO eavesdrop capture sent to hello for pair ('hello', 'shivam')
+2025-11-21 15:01:38,076 INFO bb84_qubits forwarded from=hello to=shivam eavesdrop=True
+2025-11-21 15:01:38,089 INFO bb84_result from=shivam to=hello e_rate=0.28125 passed=False
