@@ -1,0 +1,888 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BB84 Quantum Chat - Enhanced</title>
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+
+        .container {
+            width: 100%;
+            max-width: 1400px;
+            height: 90vh;
+            max-height: 900px;
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            overflow: hidden;
+            display: flex;
+        }
+
+        /* Auth Screen */
+        #auth-screen {
+            width: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        }
+
+        .auth-box {
+            width: 100%;
+            max-width: 400px;
+            background: rgba(255, 255, 255, 0.98);
+            backdrop-filter: blur(10px);
+            padding: 48px 40px;
+            border-radius: 20px;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.15);
+        }
+
+        .auth-box h2 {
+            font-size: 32px;
+            font-weight: 700;
+            color: #1a202c;
+            margin-bottom: 32px;
+            text-align: center;
+        }
+
+        .auth-box input {
+            width: 100%;
+            padding: 16px 18px;
+            margin-bottom: 16px;
+            border: 2px solid #e2e8f0;
+            border-radius: 12px;
+            font-size: 15px;
+            font-family: 'Inter', sans-serif;
+            transition: all 0.2s;
+            background: white;
+        }
+
+        .auth-box input:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 4px rgba(102, 126, 234, 0.1);
+        }
+
+        .auth-box button {
+            width: 100%;
+            padding: 16px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 12px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+            margin-top: 8px;
+        }
+
+        .auth-box button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 25px rgba(102, 126, 234, 0.4);
+        }
+
+        .auth-toggle {
+            text-align: center;
+            margin-top: 24px;
+            font-size: 14px;
+            color: #4a5568;
+        }
+
+        .auth-toggle a {
+            color: #667eea;
+            font-weight: 600;
+            cursor: pointer;
+            text-decoration: none;
+        }
+
+        .error {
+            color: #e53e3e;
+            background: #fff5f5;
+            padding: 12px;
+            border-radius: 10px;
+            text-align: center;
+            margin-top: 16px;
+            font-size: 14px;
+        }
+
+        /* Chat Screen */
+        #chat-screen {
+            display: none;
+            width: 100%;
+            flex-direction: row;
+        }
+
+        /* Sidebar */
+        #sidebar {
+            width: 320px;
+            background: #f7fafc;
+            border-right: 1px solid #e2e8f0;
+            display: flex;
+            flex-direction: column;
+        }
+
+        #sidebar-header {
+            padding: 20px;
+            background: white;
+            border-bottom: 1px solid #e2e8f0;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        #sidebar-header h3 {
+            font-size: 16px;
+            font-weight: 700;
+            color: #1a202c;
+        }
+
+        .btn-settings {
+            padding: 8px 12px;
+            background: #edf2f7;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.2s;
+        }
+
+        .btn-settings:hover {
+            background: #e2e8f0;
+        }
+
+        /* Search Bar */
+        #search-bar {
+            padding: 16px;
+            border-bottom: 1px solid #e2e8f0;
+        }
+
+        #search-bar input {
+            width: 100%;
+            padding: 10px 16px;
+            border: 2px solid #e2e8f0;
+            border-radius: 10px;
+            font-size: 14px;
+            transition: all 0.2s;
+        }
+
+        #search-bar input:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        /* User List */
+        #userList {
+            list-style: none;
+            padding: 8px;
+            overflow-y: auto;
+            flex: 1;
+        }
+
+        #userList li {
+            padding: 14px 16px;
+            margin-bottom: 4px;
+            border-radius: 10px;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            font-size: 15px;
+            color: #2d3748;
+            position: relative;
+        }
+
+        .user-status-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            flex-shrink: 0;
+        }
+
+        .status-online {
+            background: #48bb78;
+        }
+
+        .status-away {
+            background: #ecc94b;
+        }
+
+        .status-busy {
+            background: #f56565;
+        }
+
+        .status-offline {
+            background: #cbd5e0;
+        }
+
+        #userList li:hover {
+            background: #edf2f7;
+        }
+
+        #userList li.active {
+            background: #667eea;
+            color: white;
+            font-weight: 500;
+        }
+
+        /* Chat Window */
+        #chat-window {
+            flex: 1;
+            display: none;
+            flex-direction: column;
+            background: white;
+        }
+
+        #chat-header {
+            padding: 20px 24px;
+            background: white;
+            border-bottom: 1px solid #e2e8f0;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        #chat-header-left {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        #chat-header h3 {
+            font-size: 18px;
+            font-weight: 600;
+            color: #1a202c;
+        }
+
+        .user-status-text {
+            font-size: 12px;
+            color: #718096;
+        }
+
+        #chat-header-buttons {
+            display: flex;
+            gap: 8px;
+        }
+
+        .header-btn {
+            padding: 8px 14px;
+            background: #edf2f7;
+            border: none;
+            border-radius: 8px;
+            font-size: 13px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .header-btn:hover {
+            background: #e2e8f0;
+        }
+
+        .header-btn.danger {
+            background: #fc8181;
+            color: white;
+        }
+
+        .header-btn.danger:hover {
+            background: #f56565;
+        }
+
+        /* Messages */
+        #messages {
+            flex: 1;
+            padding: 24px;
+            overflow-y: auto;
+            background: #fafafa;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        #messages::-webkit-scrollbar {
+            width: 8px;
+        }
+
+        #messages::-webkit-scrollbar-thumb {
+            background: #cbd5e0;
+            border-radius: 4px;
+        }
+
+        .message {
+            max-width: 70%;
+            padding: 12px 16px;
+            border-radius: 14px;
+            line-height: 1.5;
+            word-wrap: break-word;
+            animation: slideIn 0.3s ease;
+            position: relative;
+        }
+
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .message.sent {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            align-self: flex-end;
+            border-bottom-right-radius: 4px;
+        }
+
+        .message.received {
+            background: white;
+            color: #2d3748;
+            align-self: flex-start;
+            border-bottom-left-radius: 4px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+        }
+
+        .message.pinned {
+            border: 2px solid #f6ad55;
+        }
+
+        .sender-name {
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 6px;
+            display: block;
+            opacity: 0.85;
+        }
+
+        .message-content {
+            margin: 0;
+        }
+
+        .message-timestamp {
+            font-size: 10px;
+            opacity: 0.7;
+            margin-top: 6px;
+            display: block;
+        }
+
+        .message-image {
+            max-width: 300px;
+            border-radius: 10px;
+            margin-top: 8px;
+            cursor: pointer;
+        }
+
+        .message-file {
+            padding: 12px;
+            background: rgba(0, 0, 0, 0.1);
+            border-radius: 8px;
+            margin-top: 8px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .message-voice {
+            margin-top: 8px;
+        }
+
+        .message-voice audio {
+            width: 100%;
+            height: 32px;
+        }
+
+        .message-actions {
+            position: absolute;
+            top: -30px;
+            right: 0;
+            background: white;
+            border-radius: 8px;
+            padding: 4px;
+            display: none;
+            gap: 4px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+        }
+
+        .message:hover .message-actions {
+            display: flex;
+        }
+
+        .message-action-btn {
+            padding: 6px 10px;
+            border: none;
+            background: transparent;
+            cursor: pointer;
+            font-size: 16px;
+            border-radius: 6px;
+            transition: all 0.2s;
+        }
+
+        .message-action-btn:hover {
+            background: #f7fafc;
+        }
+
+        .message-reactions {
+            display: flex;
+            gap: 6px;
+            margin-top: 8px;
+            flex-wrap: wrap;
+        }
+
+        .reaction-item {
+            padding: 4px 10px;
+            background: rgba(0, 0, 0, 0.1);
+            border-radius: 12px;
+            font-size: 14px;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .reaction-item:hover {
+            background: rgba(0, 0, 0, 0.15);
+        }
+
+        .reaction-count {
+            font-size: 11px;
+            font-weight: 600;
+        }
+
+        .typing-indicator {
+            padding: 12px 16px;
+            background: white;
+            border-radius: 14px;
+            max-width: 70px;
+            align-self: flex-start;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+        }
+
+        .typing-dots {
+            display: flex;
+            gap: 4px;
+        }
+
+        .typing-dot {
+            width: 8px;
+            height: 8px;
+            background: #cbd5e0;
+            border-radius: 50%;
+            animation: typingDot 1.4s infinite ease-in-out;
+        }
+
+        .typing-dot:nth-child(2) {
+            animation-delay: 0.2s;
+        }
+
+        .typing-dot:nth-child(3) {
+            animation-delay: 0.4s;
+        }
+
+        @keyframes typingDot {
+            0%, 60%, 100% {
+                opacity: 0.3;
+                transform: translateY(0);
+            }
+            30% {
+                opacity: 1;
+                transform: translateY(-8px);
+            }
+        }
+
+        /* Input Area */
+        #input-area {
+            padding: 20px 24px;
+            background: white;
+            border-top: 1px solid #e2e8f0;
+            display: flex;
+            gap: 12px;
+            flex-direction: column;
+        }
+
+        #input-controls {
+            display: flex;
+            gap: 12px;
+            align-items: center;
+        }
+
+        #messageInput {
+            flex: 1;
+            padding: 14px 20px;
+            border: 2px solid #e2e8f0;
+            border-radius: 24px;
+            font-size: 15px;
+            font-family: 'Inter', sans-serif;
+            transition: all 0.2s;
+            resize: none;
+            max-height: 100px;
+        }
+
+        #messageInput:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 4px rgba(102, 126, 234, 0.1);
+        }
+
+        .input-btn {
+            padding: 12px 16px;
+            background: #edf2f7;
+            border: none;
+            border-radius: 50%;
+            width: 48px;
+            height: 48px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            transition: all 0.2s;
+            font-size: 20px;
+        }
+
+        .input-btn:hover {
+            background: #e2e8f0;
+        }
+
+        #sendBtn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+
+        #sendBtn:hover {
+            transform: scale(1.05);
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+        }
+
+        /* Modal */
+        .modal {
+            display: none;
+            position: fixed;
+            z-index: 1000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.5);
+            backdrop-filter: blur(4px);
+            align-items: center;
+            justify-content: center;
+        }
+
+        .modal-content {
+            background: white;
+            padding: 32px;
+            border-radius: 20px;
+            width: 90%;
+            max-width: 500px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+        }
+
+        .modal-header {
+            font-size: 24px;
+            font-weight: 700;
+            margin-bottom: 24px;
+            color: #1a202c;
+        }
+
+        .modal-body {
+            margin-bottom: 24px;
+        }
+
+        .form-group {
+            margin-bottom: 16px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 500;
+            color: #2d3748;
+        }
+
+        .form-group input,
+        .form-group select,
+        .form-group textarea {
+            width: 100%;
+            padding: 12px 16px;
+            border: 2px solid #e2e8f0;
+            border-radius: 10px;
+            font-size: 14px;
+            font-family: 'Inter', sans-serif;
+        }
+
+        .form-group input:focus,
+        .form-group select:focus,
+        .form-group textarea:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        .modal-buttons {
+            display: flex;
+            gap: 12px;
+            justify-content: flex-end;
+        }
+
+        .btn {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 10px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 20px rgba(102, 126, 234, 0.4);
+        }
+
+        .btn-secondary {
+            background: #edf2f7;
+            color: #2d3748;
+        }
+
+        .btn-secondary:hover {
+            background: #e2e8f0;
+        }
+
+        /* Notifications */
+        .notification {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: white;
+            padding: 16px 20px;
+            border-radius: 12px;
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
+            display: none;
+            align-items: center;
+            gap: 12px;
+            z-index: 2000;
+            max-width: 350px;
+            animation: slideInRight 0.3s ease;
+        }
+
+        @keyframes slideInRight {
+            from {
+                transform: translateX(400px);
+                opacity: 0;
+            }
+            to {
+                transform: translateX(0);
+                opacity: 1;
+            }
+        }
+
+        .notification.show {
+            display: flex;
+        }
+
+        /* Hidden file input */
+        #fileInput,
+        #voiceFileInput {
+            display: none;
+        }
+
+        /* Reaction Picker */
+        .reaction-emoji {
+            font-size: 28px;
+            cursor: pointer;
+            padding: 8px;
+            display: inline-block;
+            transition: transform 0.2s;
+        }
+
+        .reaction-emoji:hover {
+            transform: scale(1.2);
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            .container {
+                height: 100vh;
+                max-height: none;
+                border-radius: 0;
+            }
+
+            #sidebar {
+                width: 100%;
+                max-height: 40vh;
+            }
+
+            #chat-screen {
+                flex-direction: column;
+            }
+
+            .message {
+                max-width: 85%;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Auth Screen -->
+        <div id="auth-screen">
+            <div id="login-box" class="auth-box">
+                <h2>Welcome Back</h2>
+                <input id="login-username" type="text" placeholder="Username" required>
+                <input id="login-password" type="password" placeholder="Password" required>
+                <button onclick="login()">Sign In</button>
+                <p class="auth-toggle">Don't have an account? <a onclick="toggleAuth('register')">Sign Up</a></p>
+                <p id="login-error" class="error" style="display: none;"></p>
+            </div>
+            <div id="register-box" class="auth-box" style="display: none;">
+                <h2>Create Account</h2>
+                <input id="register-username" type="text" placeholder="Username" required>
+                <input id="register-password" type="password" placeholder="Password" required>
+                <button onclick="register()">Sign Up</button>
+                <p class="auth-toggle">Already have an account? <a onclick="toggleAuth('login')">Sign In</a></p>
+                <p id="register-error" class="error" style="display: none;"></p>
+            </div>
+        </div>
+
+        <!-- Chat Screen -->
+        <div id="chat-screen">
+            <!-- Sidebar -->
+            <div id="sidebar">
+                <div id="sidebar-header">
+                    <h3>Chats</h3>
+                    <button class="btn-settings" onclick="openSettingsModal()">⚙️ Settings</button>
+                </div>
+                <div id="search-bar">
+                    <input type="text" id="userSearch" placeholder="Search users..." oninput="filterUsers()">
+                </div>
+                <ul id="userList"></ul>
+            </div>
+
+            <!-- Chat Window -->
+            <div id="chat-window">
+                <div id="chat-header">
+                    <div id="chat-header-left">
+                        <div>
+                            <h3 id="chat-partner-name">Select a user</h3>
+                            <span class="user-status-text" id="chat-partner-status"></span>
+                        </div>
+                    </div>
+                    <div id="chat-header-buttons">
+                        <button class="header-btn" onclick="openSearchModal()">🔍 Search</button>
+                        <button class="header-btn danger" onclick="clearChatHistory()">🗑️ Clear</button>
+                    </div>
+                </div>
+                <div id="messages">
+                    <p id="welcome" style="text-align: center; color: #a0aec0; margin: auto;">Select a user to start chatting</p>
+                </div>
+                <div id="input-area">
+                    <div id="input-controls">
+                        <button class="input-btn" onclick="document.getElementById('fileInput').click()" title="Upload file">📎</button>
+                        <button class="input-btn" onclick="document.getElementById('voiceFileInput').click()" title="Send voice message">🎤</button>
+                        <input type="file" id="fileInput" accept="image/*,.pdf,.txt" onchange="handleFileUpload(event)">
+                        <input type="file" id="voiceFileInput" accept="audio/*" onchange="handleVoiceUpload(event)">
+                        <textarea id="messageInput" placeholder="Type a message..." rows="1" oninput="handleTyping()" onkeydown="handleKey(event)"></textarea>
+                        <button id="sendBtn" class="input-btn" onclick="sendMessage()">📤</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Settings Modal -->
+    <div id="settingsModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">Settings</div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label>Status</label>
+                    <select id="statusSelect">
+                        <option value="online">🟢 Online</option>
+                        <option value="away">🟡 Away</option>
+                        <option value="busy">🔴 Busy</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Status Message</label>
+                    <input type="text" id="statusMessage" placeholder="What's on your mind?">
+                </div>
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" id="showLastSeen"> Show last seen
+                    </label>
+                </div>
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" id="showReadReceipts"> Show read receipts
+                    </label>
+                </div>
+            </div>
+            <div class="modal-buttons">
+                <button class="btn btn-secondary" onclick="closeSettingsModal()">Cancel</button>
+                <button class="btn btn-primary" onclick="saveSettings()">Save</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Search Modal -->
+    <div id="searchModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">Search Messages</div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <input type="text" id="searchQuery" placeholder="Search in conversation...">
+                </div>
+                <div id="searchResults" style="max-height: 300px; overflow-y: auto;">
+                    <!-- Search results will appear here -->
+                </div>
+            </div>
+            <div class="modal-buttons">
+                <button class="btn btn-secondary" onclick="closeSearchModal()">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Reaction Picker -->
+    <div id="reactionPicker" style="display: none; position: absolute; background: white; padding: 12px; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); z-index: 100;">
+        <span class="reaction-emoji" onclick="addReaction('👍')">👍</span>
+        <span class="reaction-emoji" onclick="addReaction('❤️')">❤️</span>
+        <span class="reaction-emoji" onclick="addReaction('😂')">😂</span>
+        <span class="reaction-emoji" onclick="addReaction('😮')">😮</span>
+        <span class="reaction-emoji" onclick="addReaction('😢')">😢</span>
+        <span class="reaction-emoji" onclick="addReaction('🔥')">🔥</span>
+    </div>
+
+    <!-- Notification -->
+    <div id="notification" class="notification">
+        <span id="notificationText"></span>
+    </div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>

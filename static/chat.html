@@ -1,0 +1,1876 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <title>BB84 Quantum Chat</title>
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-primary: #0f0f0f;
+            --bg-secondary: #1a1a1a;
+            --bg-tertiary: #242424;
+            --bg-hover: #2a2a2a;
+            --text-primary: #e4e4e7;
+            --text-secondary: #a1a1aa;
+            --text-tertiary: #71717a;
+            --accent-primary: #6366f1;
+            --accent-secondary: #8b5cf6;
+            --accent-gradient: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+            --border-color: #2a2a2a;
+            --success: #22c55e;
+            --warning: #eab308;
+            --error: #ef4444;
+            --message-sent: #3730a3;
+            --message-received: #27272a;
+            --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.3);
+            --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.4);
+            --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.5);
+            --shadow-xl: 0 20px 25px -5px rgb(0 0 0 / 0.5);
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+            line-height: 1.5;
+        }
+
+        .container {
+            width: 100%;
+            max-width: 1400px;
+            height: 90vh;
+            max-height: 900px;
+            background: var(--bg-secondary);
+            border-radius: 16px;
+            box-shadow: var(--shadow-xl);
+            overflow: hidden;
+            display: flex;
+            border: 1px solid var(--border-color);
+        }
+
+        /* ========== AUTH SCREEN ========== */
+        #auth-screen {
+            width: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: var(--bg-primary);
+        }
+
+        .auth-box {
+            width: 100%;
+            max-width: 420px;
+            background: var(--bg-secondary);
+            padding: 48px 40px;
+            border-radius: 20px;
+            box-shadow: var(--shadow-xl);
+            border: 1px solid var(--border-color);
+        }
+
+        .auth-box h2 {
+            font-size: 32px;
+            font-weight: 700;
+            color: var(--text-primary);
+            margin-bottom: 8px;
+            text-align: center;
+        }
+
+        .auth-box .subtitle {
+            font-size: 14px;
+            color: var(--text-secondary);
+            text-align: center;
+            margin-bottom: 32px;
+        }
+
+        .auth-box input {
+            width: 100%;
+            padding: 14px 16px;
+            margin-bottom: 16px;
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            font-size: 15px;
+            font-family: 'Inter', sans-serif;
+            transition: all 0.2s;
+            background: var(--bg-tertiary);
+            color: var(--text-primary);
+        }
+
+        .auth-box input:focus {
+            outline: none;
+            border-color: var(--accent-primary);
+            background: var(--bg-secondary);
+        }
+
+        .auth-box input::placeholder {
+            color: var(--text-tertiary);
+        }
+
+        .auth-box button {
+            width: 100%;
+            padding: 14px;
+            background: var(--accent-gradient);
+            color: white;
+            border: none;
+            border-radius: 12px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            margin-top: 8px;
+        }
+
+        .auth-box button:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 8px 20px rgba(99, 102, 241, 0.4);
+        }
+
+        .auth-toggle {
+            text-align: center;
+            margin-top: 24px;
+            font-size: 14px;
+            color: var(--text-secondary);
+        }
+
+        .auth-toggle a {
+            color: var(--accent-primary);
+            font-weight: 600;
+            cursor: pointer;
+            text-decoration: none;
+        }
+
+        .error {
+            color: var(--error);
+            background: rgba(239, 68, 68, 0.1);
+            padding: 12px;
+            border-radius: 10px;
+            text-align: center;
+            margin-top: 16px;
+            font-size: 14px;
+            border: 1px solid rgba(239, 68, 68, 0.2);
+        }
+
+        /* ========== CHAT SCREEN ========== */
+        #chat-screen {
+            display: none;
+            width: 100%;
+            flex-direction: row;
+        }
+
+        /* ========== SIDEBAR ========== */
+        #sidebar {
+            width: 340px;
+            background: var(--bg-secondary);
+            border-right: 1px solid var(--border-color);
+            display: flex;
+            flex-direction: column;
+        }
+
+        #sidebar-header {
+            padding: 20px 24px;
+            background: var(--bg-tertiary);
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        #sidebar-header h3 {
+            font-size: 20px;
+            font-weight: 700;
+            color: var(--text-primary);
+            margin-bottom: 16px;
+        }
+
+        .header-actions {
+            display: flex;
+            gap: 8px;
+        }
+
+        .btn-icon {
+            padding: 8px 12px;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 13px;
+            transition: all 0.2s;
+            color: var(--text-secondary);
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .btn-icon:hover {
+            background: var(--bg-hover);
+            color: var(--text-primary);
+        }
+
+        /* Search Bar */
+        #search-bar {
+            padding: 16px 20px;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        #search-bar input {
+            width: 100%;
+            padding: 10px 16px 10px 40px;
+            border: 1px solid var(--border-color);
+            border-radius: 10px;
+            font-size: 14px;
+            transition: all 0.2s;
+            background: var(--bg-tertiary);
+            color: var(--text-primary);
+        }
+
+        #search-bar input:focus {
+            outline: none;
+            border-color: var(--accent-primary);
+            background: var(--bg-secondary);
+        }
+
+        #search-bar input::placeholder {
+            color: var(--text-tertiary);
+        }
+
+        .search-wrapper {
+            position: relative;
+        }
+
+        .search-icon {
+            position: absolute;
+            left: 14px;
+            top: 50%;
+            transform: translateY(-50%);
+            color: var(--text-tertiary);
+            font-size: 16px;
+        }
+
+        /* User List */
+        #userList {
+            list-style: none;
+            padding: 8px 12px;
+            overflow-y: auto;
+            flex: 1;
+        }
+
+        #userList::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        #userList::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        #userList::-webkit-scrollbar-thumb {
+            background: var(--bg-tertiary);
+            border-radius: 3px;
+        }
+
+        #userList li {
+            padding: 12px 16px;
+            margin-bottom: 4px;
+            border-radius: 10px;
+            cursor: pointer;
+            transition: all 0.15s;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            position: relative;
+        }
+
+        #userList li:hover {
+            background: var(--bg-tertiary);
+        }
+
+        #userList li.active {
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border-color);
+        }
+
+        .user-avatar {
+            width: 42px;
+            height: 42px;
+            border-radius: 50%;
+            background: var(--accent-gradient);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 600;
+            font-size: 16px;
+            color: white;
+            flex-shrink: 0;
+            position: relative;
+        }
+
+        .user-status-badge {
+            position: absolute;
+            bottom: 0;
+            right: 0;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            border: 2px solid var(--bg-secondary);
+        }
+
+        .status-online { background: var(--success); }
+        .status-away { background: var(--warning); }
+        .status-busy { background: var(--error); }
+        .status-offline { background: var(--text-tertiary); }
+
+        .user-info {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .user-name {
+            font-size: 15px;
+            font-weight: 500;
+            color: var(--text-primary);
+            margin-bottom: 2px;
+        }
+
+        .user-last-message {
+            font-size: 13px;
+            color: var(--text-secondary);
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        /* ========== CHAT WINDOW ========== */
+        #chat-window {
+            flex: 1;
+            display: none;
+            flex-direction: column;
+            background: var(--bg-primary);
+        }
+
+        #chat-header {
+            padding: 16px 24px;
+            background: var(--bg-secondary);
+            border-bottom: 1px solid var(--border-color);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            position: sticky;
+            top: 0;
+            z-index: 10;
+        }
+
+        #chat-header-left {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .chat-avatar {
+            width: 44px;
+            height: 44px;
+            border-radius: 50%;
+            background: var(--accent-gradient);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 600;
+            font-size: 18px;
+            color: white;
+        }
+
+        .chat-info {
+            flex: 1;
+        }
+
+        .chat-name {
+            font-size: 16px;
+            font-weight: 600;
+            color: var(--text-primary);
+            margin-bottom: 2px;
+        }
+
+        .chat-status {
+            font-size: 12px;
+            color: var(--text-secondary);
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .status-dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: var(--success);
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        #chat-header-buttons {
+            display: flex;
+            gap: 8px;
+        }
+
+        .header-btn {
+            padding: 8px 12px;
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            font-size: 13px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s;
+            color: var(--text-secondary);
+        }
+
+        .header-btn:hover {
+            background: var(--bg-hover);
+            color: var(--text-primary);
+        }
+
+        .header-btn.danger:hover {
+            background: rgba(239, 68, 68, 0.1);
+            color: var(--error);
+            border-color: var(--error);
+        }
+
+        /* ========== MESSAGES ========== */
+        #messages {
+            flex: 1;
+            padding: 24px;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+        }
+
+        #messages::-webkit-scrollbar {
+            width: 8px;
+        }
+
+        #messages::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        #messages::-webkit-scrollbar-thumb {
+            background: var(--bg-tertiary);
+            border-radius: 4px;
+        }
+
+        .date-separator {
+            text-align: center;
+            margin: 16px 0;
+            font-size: 12px;
+            color: var(--text-tertiary);
+            font-weight: 500;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .message-cluster {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+            margin-bottom: 16px;
+        }
+
+        .message {
+            max-width: 65%;
+            display: flex;
+            gap: 8px;
+            animation: messageSlideIn 0.2s ease-out;
+        }
+
+        @keyframes messageSlideIn {
+            from {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .message.sent {
+            align-self: flex-end;
+            flex-direction: row-reverse;
+        }
+
+        .message.received {
+            align-self: flex-start;
+        }
+
+        .message-avatar {
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            background: var(--accent-gradient);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 600;
+            font-size: 13px;
+            color: white;
+            flex-shrink: 0;
+            align-self: flex-end;
+        }
+
+        .message.sent .message-avatar {
+            display: none;
+        }
+
+        .message-content {
+            flex: 1;
+            position: relative;
+        }
+
+        .message-bubble {
+            padding: 10px 14px;
+            border-radius: 14px;
+            line-height: 1.5;
+            word-wrap: break-word;
+            position: relative;
+        }
+
+        .message.sent .message-bubble {
+            background: var(--message-sent);
+            color: white;
+            border-bottom-right-radius: 4px;
+        }
+
+        .message.received .message-bubble {
+            background: var(--message-received);
+            color: var(--text-primary);
+            border-bottom-left-radius: 4px;
+            border: 1px solid var(--border-color);
+        }
+
+        .message.first .message-bubble {
+            border-top-left-radius: 14px;
+            border-top-right-radius: 14px;
+        }
+
+        .message.last .message-bubble {
+            border-bottom-left-radius: 14px;
+            border-bottom-right-radius: 14px;
+        }
+
+        .message.sent.last .message-bubble {
+            border-bottom-right-radius: 4px;
+        }
+
+        .message.received.last .message-bubble {
+            border-bottom-left-radius: 4px;
+        }
+
+        .sender-name {
+            font-size: 11px;
+            font-weight: 600;
+            margin-bottom: 4px;
+            opacity: 0.7;
+            cursor: pointer;
+            transition: opacity 0.2s;
+        }
+
+        .sender-name:hover {
+            opacity: 1;
+            text-decoration: underline;
+        }
+
+        .message-text {
+            font-size: 14px;
+            margin: 0;
+        }
+
+        .btn.active {
+            background: var(--primary-color);
+            color: white;
+            border-color: var(--primary-color);
+        }
+
+        .message-meta {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            margin-top: 4px;
+            font-size: 11px;
+            opacity: 0.6;
+        }
+
+        .message-image {
+            max-width: 300px;
+            border-radius: 10px;
+            margin-top: 6px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .message-image:hover {
+            transform: scale(1.02);
+        }
+
+        .message-file {
+            padding: 10px 12px;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 8px;
+            margin-top: 6px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            transition: all 0.2s;
+        }
+
+        .message-file:hover {
+            background: rgba(255, 255, 255, 0.08);
+        }
+
+        .message-voice audio {
+            width: 100%;
+            height: 32px;
+            margin-top: 6px;
+        }
+
+        /* Voice Player Styles */
+        .voice-player {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 12px;
+            background: rgba(255, 255, 255, 0.03);
+            border-radius: 12px;
+            margin-top: 6px;
+            min-width: 250px;
+        }
+
+        .voice-play-btn {
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            background: var(--accent-primary);
+            border: none;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            transition: all 0.2s;
+            flex-shrink: 0;
+        }
+
+        .voice-play-btn:hover {
+            background: var(--accent-secondary);
+            transform: scale(1.05);
+        }
+
+        .voice-play-btn.playing svg polygon {
+            display: none;
+        }
+
+        .voice-play-btn.playing::after {
+            content: '';
+            width: 12px;
+            height: 12px;
+            border-left: 3px solid white;
+            border-right: 3px solid white;
+            box-sizing: border-box;
+        }
+
+        .voice-waveform {
+            flex: 1;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            position: relative;
+        }
+
+        .voice-progress {
+            flex: 1;
+            height: 4px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 2px;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .voice-progress::before {
+            content: '';
+            position: absolute;
+            left: 0;
+            top: 0;
+            height: 100%;
+            width: 0%;
+            background: var(--accent-primary);
+            border-radius: 2px;
+            transition: width 0.1s linear;
+        }
+
+        .voice-time {
+            font-size: 11px;
+            color: var(--text-tertiary);
+            min-width: 35px;
+            text-align: right;
+        }
+
+        .message-reactions {
+            display: flex;
+            gap: 4px;
+            margin-top: 6px;
+            flex-wrap: wrap;
+        }
+
+        .reaction-item {
+            padding: 3px 8px;
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            font-size: 13px;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .reaction-item:hover {
+            background: rgba(255, 255, 255, 0.1);
+            transform: scale(1.05);
+        }
+
+        .typing-indicator {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 12px;
+            margin-left: 48px;
+        }
+
+        .typing-dots {
+            display: flex;
+            gap: 4px;
+        }
+
+        .typing-dot {
+            width: 8px;
+            height: 8px;
+            background: var(--text-tertiary);
+            border-radius: 50%;
+            animation: typingDot 1.4s infinite ease-in-out;
+        }
+
+        .typing-dot:nth-child(2) { animation-delay: 0.2s; }
+        .typing-dot:nth-child(3) { animation-delay: 0.4s; }
+
+        @keyframes typingDot {
+            0%, 60%, 100% {
+                opacity: 0.3;
+                transform: translateY(0);
+            }
+            30% {
+                opacity: 1;
+                transform: translateY(-8px);
+            }
+        }
+
+        /* ========== INPUT AREA ========== */
+        #input-area {
+            padding: 20px 24px;
+            background: var(--bg-secondary);
+            border-top: 1px solid var(--border-color);
+        }
+
+        .input-wrapper {
+            display: flex;
+            align-items: flex-end;
+            gap: 8px;
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border-color);
+            border-radius: 24px;
+            padding: 8px 8px 8px 16px;
+            transition: all 0.2s;
+        }
+
+        .input-wrapper:focus-within {
+            border-color: var(--accent-primary);
+            background: var(--bg-secondary);
+        }
+
+        .input-actions {
+            display: flex;
+            gap: 4px;
+        }
+
+        .input-icon-btn {
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            background: transparent;
+            border: none;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s;
+            color: var(--text-secondary);
+            font-size: 18px;
+        }
+
+        .input-icon-btn:hover {
+            background: var(--bg-hover);
+            color: var(--text-primary);
+        }
+
+        #messageInput {
+            flex: 1;
+            padding: 8px 0;
+            border: none;
+            background: transparent;
+            font-size: 14px;
+            font-family: 'Inter', sans-serif;
+            color: var(--text-primary);
+            resize: none;
+            max-height: 120px;
+            line-height: 1.5;
+        }
+
+        #messageInput:focus {
+            outline: none;
+        }
+
+        #messageInput::placeholder {
+            color: var(--text-tertiary);
+        }
+
+        #sendBtn {
+            background: var(--accent-gradient);
+            color: white;
+        }
+
+        #sendBtn:hover {
+            transform: scale(1.05);
+        }
+
+        .recording-indicator {
+            display: none;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 16px;
+            background: rgba(239, 68, 68, 0.1);
+            border: 1px solid var(--error);
+            border-radius: 20px;
+            color: var(--error);
+            font-size: 13px;
+            font-weight: 500;
+        }
+
+        .recording-indicator.active {
+            display: flex;
+        }
+
+        .recording-dot {
+            width: 8px;
+            height: 8px;
+            background: var(--error);
+            border-radius: 50%;
+            animation: pulse 1s infinite;
+        }
+
+        /* ========== MODALS ========== */
+        .modal {
+            display: none;
+            position: fixed;
+            z-index: 1000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.7);
+            backdrop-filter: blur(8px);
+            align-items: center;
+            justify-content: center;
+        }
+
+        .modal-content {
+            background: var(--bg-secondary);
+            padding: 32px;
+            border-radius: 20px;
+            width: 90%;
+            max-width: 500px;
+            box-shadow: var(--shadow-xl);
+            border: 1px solid var(--border-color);
+            animation: modalSlideIn 0.3s ease-out;
+        }
+
+        @keyframes modalSlideIn {
+            from {
+                opacity: 0;
+                transform: translateY(-20px) scale(0.95);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0) scale(1);
+            }
+        }
+
+        .modal-header {
+            font-size: 24px;
+            font-weight: 700;
+            margin-bottom: 24px;
+            color: var(--text-primary);
+        }
+
+        .modal-body {
+            margin-bottom: 24px;
+        }
+
+        .form-group {
+            margin-bottom: 16px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 500;
+            color: var(--text-primary);
+            font-size: 14px;
+        }
+
+        .form-group input,
+        .form-group select,
+        .form-group textarea {
+            width: 100%;
+            padding: 12px 16px;
+            border: 1px solid var(--border-color);
+            border-radius: 10px;
+            font-size: 14px;
+            font-family: 'Inter', sans-serif;
+            background: var(--bg-tertiary);
+            color: var(--text-primary);
+        }
+
+        .form-group input:focus,
+        .form-group select:focus,
+        .form-group textarea:focus {
+            outline: none;
+            border-color: var(--accent-primary);
+        }
+
+        .form-group input::placeholder,
+        .form-group textarea::placeholder {
+            color: var(--text-tertiary);
+        }
+
+        .checkbox-group {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .checkbox-group input[type="checkbox"] {
+            width: auto;
+        }
+
+        .modal-buttons {
+            display: flex;
+            gap: 12px;
+            justify-content: flex-end;
+        }
+
+        .btn {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 10px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .btn-primary {
+            background: var(--accent-gradient);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 8px 20px rgba(99, 102, 241, 0.4);
+        }
+
+        .btn-secondary {
+            background: var(--bg-tertiary);
+            color: var(--text-primary);
+            border: 1px solid var(--border-color);
+        }
+
+        .btn-secondary:hover {
+            background: var(--bg-hover);
+        }
+
+        /* ========== NOTIFICATIONS ========== */
+        .notification {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: var(--bg-secondary);
+            padding: 16px 20px;
+            border-radius: 12px;
+            box-shadow: var(--shadow-lg);
+            display: none;
+            align-items: center;
+            gap: 12px;
+            z-index: 2000;
+            max-width: 350px;
+            border: 1px solid var(--border-color);
+            animation: slideInRight 0.3s ease-out;
+        }
+
+        @keyframes slideInRight {
+            from {
+                transform: translateX(400px);
+                opacity: 0;
+            }
+            to {
+                transform: translateX(0);
+                opacity: 1;
+            }
+        }
+
+        .notification.show {
+            display: flex;
+        }
+
+        /* Hidden inputs */
+        #fileInput,
+        #voiceFileInput {
+            display: none;
+        }
+
+        /* Mobile Back Button */
+        .mobile-back-btn {
+            background: none;
+            border: none;
+            color: var(--text-primary);
+            cursor: pointer;
+            padding: 8px;
+            margin-right: 8px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: background 0.2s;
+        }
+
+        .mobile-back-btn:hover {
+            background: var(--bg-hover);
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            .container {
+                height: 100vh;
+                max-height: none;
+                border-radius: 0;
+            }
+
+            #sidebar {
+                width: 100%;
+                position: absolute;
+                left: 0;
+                top: 0;
+                height: 100%;
+                z-index: 10;
+                background: var(--sidebar-bg);
+                transition: transform 0.3s ease;
+            }
+
+            #chat-screen.chat-active #sidebar {
+                transform: translateX(-100%);
+            }
+
+            #chat-window {
+                width: 100%;
+            }
+
+            .mobile-back-btn {
+                display: flex !important;
+            }
+
+            #chat-screen:not(.chat-active) #chat-window {
+                display: none;
+            }
+
+            .message {
+                max-width: 85%;
+            }
+
+            .modal-content {
+                width: 95%;
+                max-width: none;
+                margin: 10px;
+            }
+
+            .auth-box {
+                width: 90%;
+                padding: 30px 20px;
+            }
+
+            /* Touch-friendly buttons */
+            .btn-icon, .header-btn, button {
+                min-height: 44px;
+                min-width: 44px;
+            }
+
+            /* Larger input on mobile */
+            #messageInput {
+                font-size: 16px; /* Prevents zoom on iOS */
+            }
+
+            /* Swipe indicator */
+            .message.swiped {
+                transform: translateX(-80px);
+                transition: transform 0.2s ease;
+            }
+
+            .message-swipe-actions {
+                position: absolute;
+                right: 0;
+                top: 50%;
+                transform: translateY(-50%);
+                display: flex;
+                gap: 8px;
+                opacity: 0;
+                transition: opacity 0.2s;
+            }
+
+            .message.swiped .message-swipe-actions {
+                opacity: 1;
+            }
+
+            .swipe-action-btn {
+                width: 40px;
+                height: 40px;
+                border-radius: 50%;
+                background: var(--accent-primary);
+                border: none;
+                color: white;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                cursor: pointer;
+            }
+
+            /* Bottom navigation for mobile */
+            .mobile-bottom-nav {
+                display: flex;
+                justify-content: space-around;
+                background: var(--bg-tertiary);
+                border-top: 1px solid var(--border-color);
+                padding: 8px 0;
+            }
+
+            /* Voice player on mobile */
+            .voice-player {
+                min-width: 220px;
+            }
+
+            /* Hide header buttons text on mobile */
+            .header-btn {
+                padding: 8px;
+                font-size: 0;
+            }
+
+            .header-btn svg {
+                margin: 0;
+            }
+
+            #chat-header-buttons {
+                display: flex;
+                gap: 4px;
+                flex-wrap: wrap;
+            }
+
+            #chat-header {
+                padding: 12px 16px;
+                gap: 8px;
+            }
+
+            .chat-avatar {
+                width: 38px;
+                height: 38px;
+                font-size: 16px;
+            }
+
+            .chat-info {
+                min-width: 0;
+            }
+
+            .chat-name {
+                font-size: 14px;
+                white-space: nowrap;
+                overflow: hidden;
+                text-overflow: ellipsis;
+            }
+
+            .chat-status {
+                font-size: 11px;
+            }
+        }
+
+        /* Tablet landscape */
+        @media (min-width: 769px) and (max-width: 1024px) {
+            #sidebar {
+                width: 280px;
+            }
+
+            .message {
+                max-width: 70%;
+            }
+        }
+
+        /* Touch gestures */
+        .message {
+            position: relative;
+            touch-action: pan-y;
+            user-select: none;
+        }
+
+        /* Pin indicator */
+        .message.pinned::before {
+            content: '';
+            position: absolute;
+            left: -8px;
+            top: 50%;
+            transform: translateY(-50%);
+            width: 4px;
+            height: 60%;
+            background: var(--accent-primary);
+            border-radius: 2px;
+        }
+
+        .pinned-messages-banner {
+            background: var(--bg-tertiary);
+            border-bottom: 1px solid var(--border-color);
+            padding: 12px 16px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            cursor: pointer;
+        }
+
+        .pinned-messages-banner:hover {
+            background: var(--bg-hover);
+        }
+
+        #welcome {
+            text-align: center;
+            color: var(--text-tertiary);
+            margin: auto;
+            font-size: 15px;
+        }
+
+        /* Message Options Menu */
+        .message-options-menu {
+            position: fixed;
+            background: var(--bg-secondary);
+            border-radius: 8px;
+            box-shadow: var(--shadow-md);
+            padding: 8px 0;
+            z-index: 1000;
+            min-width: 180px;
+        }
+
+        .message-options-menu .menu-item {
+            padding: 10px 16px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            color: var(--text-primary);
+            transition: background 0.2s;
+        }
+
+        .message-options-menu .menu-item:hover {
+            background: var(--bg-hover);
+        }
+
+        .message-options-menu .menu-item svg {
+            flex-shrink: 0;
+        }
+
+        /* Reply Preview */
+        #replyPreview {
+            animation: slideDown 0.2s ease;
+        }
+
+        @keyframes slideDown {
+            from {
+                opacity: 0;
+                transform: translateY(-10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        /* Call UI */
+        .call-btn {
+            transition: all 0.3s;
+        }
+
+        .call-btn:hover {
+            transform: scale(1.05);
+        }
+
+        .call-btn.end:hover {
+            background: #dc2626 !important;
+        }
+
+        /* Logout Button */
+        .logout-btn {
+            width: 100%;
+            padding: 12px;
+            background: var(--bg-tertiary);
+            color: var(--text-primary);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            font-size: 14px;
+            font-weight: 500;
+            transition: all 0.2s;
+        }
+
+        .logout-btn:hover {
+            background: var(--bg-hover);
+            border-color: var(--error);
+            color: var(--error);
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Auth Screen -->
+        <div id="auth-screen">
+            <div id="login-box" class="auth-box">
+                <h2>Welcome Back</h2>
+                <p class="subtitle">Sign in to continue to BB84 Chat</p>
+                <input id="login-username" type="text" placeholder="Username" required>
+                <input id="login-password" type="password" placeholder="Password" required>
+                <button onclick="login()">Sign In</button>
+                
+                <div style="margin: 20px 0; text-align: center; color: var(--text-tertiary); font-size: 14px;">
+                    <span style="position: relative; z-index: 1; background: var(--bg-secondary); padding: 0 10px;">OR</span>
+                    <div style="position: absolute; width: 100%; height: 1px; background: var(--border-color); margin-top: -10px; z-index: 0;"></div>
+                </div>
+                
+                <button onclick="openQRScanner()" style="background: var(--bg-tertiary); color: var(--text-primary); margin-top: 0;">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right: 8px; vertical-align: middle;">
+                        <rect x="3" y="3" width="7" height="7"></rect>
+                        <rect x="14" y="3" width="7" height="7"></rect>
+                        <rect x="14" y="14" width="7" height="7"></rect>
+                        <rect x="3" y="14" width="7" height="7"></rect>
+                    </svg>
+                    Scan QR Code to Login
+                </button>
+                
+                <p class="auth-toggle">Don't have an account? <a onclick="toggleAuth('register')">Sign Up</a></p>
+                <p id="login-error" class="error" style="display: none;"></p>
+            </div>
+            <div id="register-box" class="auth-box" style="display: none;">
+                <h2>Create Account</h2>
+                <p class="subtitle">Join BB84 Quantum Chat today</p>
+                <input id="register-username" type="text" placeholder="Choose a username" required>
+                <input id="register-password" type="password" placeholder="Create a password" required>
+                <button onclick="register()">Sign Up</button>
+                <p class="auth-toggle">Already have an account? <a onclick="toggleAuth('login')">Sign In</a></p>
+                <p id="register-error" class="error" style="display: none;"></p>
+            </div>
+        </div>
+
+        <!-- Chat Screen -->
+        <div id="chat-screen">
+            <!-- Sidebar -->
+            <div id="sidebar">
+                <div id="sidebar-header">
+                    <h3>Chats</h3>
+                    <div class="header-actions">
+                        <button class="btn-icon" onclick="openGroupModal()">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+                                <circle cx="9" cy="7" r="4"></circle>
+                                <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
+                                <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
+                            </svg>
+                            New Group
+                        </button>
+                        <button class="btn-icon" onclick="openSettingsModal()">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <circle cx="12" cy="12" r="3"></circle>
+                                <path d="M12 1v6m0 6v6M5.64 5.64l4.24 4.24m4.24 4.24l4.24 4.24M1 12h6m6 0h6M5.64 18.36l4.24-4.24m4.24-4.24l4.24-4.24"></path>
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+                <div id="search-bar">
+                    <div class="search-wrapper">
+                        <span class="search-icon">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <circle cx="11" cy="11" r="8"></circle>
+                                <path d="m21 21-4.35-4.35"></path>
+                            </svg>
+                        </span>
+                        <input type="text" id="userSearch" placeholder="Search conversations..." oninput="filterUsers()">
+                    </div>
+                </div>
+                <ul id="userList"></ul>
+                
+                <!-- Logout Button at Bottom -->
+                <div style="padding: 16px; border-top: 1px solid var(--border-color); margin-top: auto;">
+                    <button onclick="logout()" class="logout-btn">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
+                            <polyline points="16 17 21 12 16 7"></polyline>
+                            <line x1="21" y1="12" x2="9" y2="12"></line>
+                        </svg>
+                        Logout
+                    </button>
+                </div>
+            </div>
+
+            <!-- Chat Window -->
+            <div id="chat-window">
+                <div id="chat-header">
+                    <button class="mobile-back-btn" onclick="showSidebar()" style="display: none;">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M19 12H5M12 19l-7-7 7-7"/>
+                        </svg>
+                    </button>
+                    <div id="chat-header-left">
+                        <div class="chat-avatar" id="chatAvatar">U</div>
+                        <div class="chat-info">
+                            <div class="chat-name" id="chat-partner-name">Select a user</div>
+                            <div class="chat-status" id="chat-partner-status">
+                                <span class="status-dot"></span>
+                                <span>Online</span>
+                            </div>
+                        </div>
+                    </div>
+                    <div id="chat-header-buttons">
+                        <button class="header-btn" onclick="initiateCall('voice')" title="Voice Call">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"></path>
+                            </svg>
+                        </button>
+                        <button class="header-btn" onclick="initiateCall('video')" title="Video Call">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <polygon points="23 7 16 12 23 17 23 7"></polygon>
+                                <rect x="1" y="5" width="15" height="14" rx="2" ry="2"></rect>
+                            </svg>
+                        </button>
+                        <button class="header-btn" onclick="openSearchModal()">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <circle cx="11" cy="11" r="8"></circle>
+                                <path d="m21 21-4.35-4.35"></path>
+                            </svg>
+                            Search
+                        </button>
+                        <button class="header-btn" onclick="openMediaGallery()" title="Media Gallery">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+                                <circle cx="8.5" cy="8.5" r="1.5"></circle>
+                                <polyline points="21 15 16 10 5 21"></polyline>
+                            </svg>
+                        </button>
+                        <button class="header-btn" onclick="openNotificationSettings()" title="Notifications">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path>
+                                <path d="M13.73 21a2 2 0 0 1-3.46 0"></path>
+                            </svg>
+                        </button>
+                        <button class="header-btn danger" onclick="clearChatHistory()">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <polyline points="3 6 5 6 21 6"></polyline>
+                                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                            </svg>
+                            Clear
+                        </button>
+                    </div>
+                </div>
+                <div id="messages">
+                    <p id="welcome">Select a user to start chatting</p>
+                </div>
+                <div id="input-area">
+                    <div class="recording-indicator" id="recordingIndicator">
+                        <span class="recording-dot"></span>
+                        <span id="recordingTime">0:00</span>
+                        <button class="btn-secondary" onclick="stopRecording()">Stop</button>
+                    </div>
+                    <div class="input-wrapper">
+                        <div class="input-actions">
+                            <button class="input-icon-btn" onclick="document.getElementById('fileInput').click()" title="Attach file">
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"></path>
+                                </svg>
+                            </button>
+                            <button class="input-icon-btn" onclick="toggleVoiceRecording()" id="micBtn" title="Voice message">
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path>
+                                    <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
+                                    <line x1="12" y1="19" x2="12" y2="23"></line>
+                                    <line x1="8" y1="23" x2="16" y2="23"></line>
+                                </svg>
+                            </button>
+                            <input type="file" id="fileInput" accept="image/*,.pdf,.txt" onchange="handleFileUpload(event)">
+                        </div>
+                        <textarea id="messageInput" placeholder="Type a message..." rows="1" oninput="handleTyping()" onkeydown="handleKey(event)"></textarea>
+                        <button id="sendBtn" class="input-icon-btn" onclick="sendMessage()">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <line x1="22" y1="2" x2="11" y2="13"></line>
+                                <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Group Modal -->
+    <div id="groupModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">Create New Group</div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label>Group Name</label>
+                    <input type="text" id="groupName" placeholder="Enter group name">
+                </div>
+                <div class="form-group">
+                    <label>Select Members</label>
+                    <div id="membersList" style="max-height: 200px; overflow-y: auto;">
+                        <!-- Members will be populated dynamically -->
+                    </div>
+                </div>
+            </div>
+            <div class="modal-buttons">
+                <button class="btn btn-secondary" onclick="closeGroupModal()">Cancel</button>
+                <button class="btn btn-primary" onclick="createGroup()">Create Group</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Group Settings Modal -->
+    <div id="groupSettingsModal" class="modal">
+        <div class="modal-content" style="max-width: 600px;">
+            <div class="modal-header">Group Settings</div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label>Group Name</label>
+                    <input type="text" id="editGroupName" placeholder="Group name">
+                    <button class="btn btn-primary" onclick="updateGroupName()" style="margin-top: 8px;">Update Name</button>
+                </div>
+                
+                <div class="form-group">
+                    <label>Group Members</label>
+                    <div id="groupMembersList" style="max-height: 200px; overflow-y: auto; border: 1px solid var(--border-color); border-radius: 8px; padding: 8px;">
+                        <!-- Members will be populated -->
+                    </div>
+                </div>
+                
+                <div class="form-group">
+                    <label>Add Members</label>
+                    <select id="addMemberSelect" style="margin-bottom: 8px;">
+                        <option value="">Select a user...</option>
+                    </select>
+                    <button class="btn btn-primary" onclick="addMemberToGroup()">Add Member</button>
+                </div>
+                
+                <div class="form-group">
+                    <label>Group Admins</label>
+                    <div id="groupAdminsList" style="max-height: 150px; overflow-y: auto; border: 1px solid var(--border-color); border-radius: 8px; padding: 8px;">
+                        <!-- Admins will be populated -->
+                    </div>
+                </div>
+                
+                <div class="form-group">
+                    <label>Invite Users</label>
+                    <input type="text" id="inviteUsername" placeholder="Enter username">
+                    <button class="btn btn-primary" onclick="createInvitation()" style="margin-top: 8px;">Create Invitation</button>
+                    <div id="invitationLink" style="margin-top: 8px; color: var(--text-secondary); font-size: 12px;"></div>
+                </div>
+            </div>
+            <div class="modal-buttons">
+                <button class="btn btn-secondary" onclick="closeGroupSettingsModal()">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Multi-Device Modal -->
+    <div id="multiDeviceModal" class="modal">
+        <div class="modal-content" style="max-width: 500px;">
+            <div class="modal-header">Multi-Device Sync</div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label>Linked Devices</label>
+                    <div id="devicesList" style="max-height: 200px; overflow-y: auto; border: 1px solid var(--border-color); border-radius: 8px; padding: 8px;">
+                        <!-- Devices will be populated -->
+                    </div>
+                </div>
+                
+                <div class="form-group">
+                    <label>Link New Device</label>
+                    <button class="btn btn-primary" onclick="generateQRCode()" style="width: 100%;">Generate QR Code</button>
+                    <div id="qrCodeContainer" style="margin-top: 16px; text-align: center; display: none;">
+                        <div id="qrCodeDisplay" style="background: white; padding: 20px; border-radius: 8px; display: inline-block;">
+                            <!-- QR code will be displayed here -->
+                        </div>
+                        <p style="color: var(--text-secondary); font-size: 12px; margin-top: 8px;">Scan this code with your other device</p>
+                        <p id="qrExpiry" style="color: var(--text-tertiary); font-size: 11px;"></p>
+                    </div>
+                </div>
+                
+                <div class="form-group">
+                    <label>Scan QR Code</label>
+                    <input type="text" id="qrTokenInput" placeholder="Or enter token manually">
+                    <button class="btn btn-primary" onclick="verifyQRCode()" style="margin-top: 8px;">Verify & Link</button>
+                </div>
+            </div>
+            <div class="modal-buttons">
+                <button class="btn btn-secondary" onclick="closeMultiDeviceModal()">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- QR Scanner Modal -->
+    <div id="qrScannerModal" class="modal">
+        <div class="modal-content" style="max-width: 500px;">
+            <div class="modal-header">Scan QR Code to Login</div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label>Camera Scanner</label>
+                    <div id="qrScannerVideo" style="width: 100%; max-width: 400px; height: 400px; background: #000; border-radius: 8px; margin: 0 auto; position: relative; overflow: hidden;">
+                        <video id="qrVideo" style="width: 100%; height: 100%; object-fit: cover;"></video>
+                        <div id="qrScannerOverlay" style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 250px; height: 250px; border: 2px solid var(--accent-primary); border-radius: 8px; pointer-events: none;">
+                            <div style="position: absolute; top: -2px; left: -2px; width: 20px; height: 20px; border-top: 4px solid var(--accent-primary); border-left: 4px solid var(--accent-primary);"></div>
+                            <div style="position: absolute; top: -2px; right: -2px; width: 20px; height: 20px; border-top: 4px solid var(--accent-primary); border-right: 4px solid var(--accent-primary);"></div>
+                            <div style="position: absolute; bottom: -2px; left: -2px; width: 20px; height: 20px; border-bottom: 4px solid var(--accent-primary); border-left: 4px solid var(--accent-primary);"></div>
+                            <div style="position: absolute; bottom: -2px; right: -2px; width: 20px; height: 20px; border-bottom: 4px solid var(--accent-primary); border-right: 4px solid var(--accent-primary);"></div>
+                        </div>
+                    </div>
+                    <p id="qrScannerStatus" style="text-align: center; margin-top: 12px; color: var(--text-secondary); font-size: 14px;">Position QR code in the frame</p>
+                </div>
+                
+                <div class="form-group">
+                    <label>Or Enter Token Manually</label>
+                    <input type="text" id="manualQRToken" placeholder="Paste token here">
+                    <button class="btn btn-primary" onclick="loginWithManualToken()" style="margin-top: 8px; width: 100%;">Login with Token</button>
+                </div>
+            </div>
+            <div class="modal-buttons">
+                <button class="btn btn-secondary" onclick="closeQRScanner()">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Settings Modal -->
+    <div id="settingsModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">Settings</div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label>Profile Picture</label>
+                    <input type="file" id="avatarInput" accept="image/*" onchange="uploadProfilePicture(this.files[0])" style="display: block; margin-top: 8px;">
+                    <small style="color: var(--text-tertiary); font-size: 12px;">Upload a profile picture (JPG, PNG)</small>
+                </div>
+                <div class="form-group">
+                    <label>Status</label>
+                    <select id="statusSelect">
+                        <option value="online">🟢 Online</option>
+                        <option value="away">🟡 Away</option>
+                        <option value="busy">🔴 Busy</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Status Message</label>
+                    <input type="text" id="statusMessage" placeholder="What's on your mind?">
+                </div>
+                <div class="form-group checkbox-group">
+                    <input type="checkbox" id="showLastSeen">
+                    <label for="showLastSeen">Show last seen</label>
+                </div>
+                <div class="form-group checkbox-group">
+                    <input type="checkbox" id="showReadReceipts">
+                    <label for="showReadReceipts">Show read receipts</label>
+                </div>
+            </div>
+            <div class="modal-buttons">
+                <button class="btn btn-secondary" onclick="closeSettingsModal()">Cancel</button>
+                <button class="btn btn-primary" onclick="saveSettings()">Save Changes</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Search Modal -->
+    <div id="searchModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">Search Messages</div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <input type="text" id="searchQuery" placeholder="Search in conversation...">
+                </div>
+                <div id="searchResults" style="max-height: 300px; overflow-y: auto;">
+                    <!-- Results will appear here -->
+                </div>
+            </div>
+            <div class="modal-buttons">
+                <button class="btn btn-secondary" onclick="closeSearchModal()">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- User Profile Modal -->
+    <div id="userProfileModal" class="modal">
+        <div class="modal-content" style="max-width: 500px;">
+            <div class="modal-header">
+                <span id="profileUsername">User Profile</span>
+                <button class="close-btn" onclick="closeUserProfileModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div style="text-align: center; margin-bottom: 20px;">
+                    <img id="profileAvatar" src="/static/default-avatar.png" alt="Profile" style="width: 120px; height: 120px; border-radius: 50%; object-fit: cover; border: 3px solid var(--primary-color);">
+                </div>
+                <div class="form-group">
+                    <label>Username</label>
+                    <input type="text" id="profileUsernameField" readonly style="background: var(--sidebar-bg); cursor: not-allowed;">
+                </div>
+                <div class="form-group">
+                    <label>Bio</label>
+                    <textarea id="profileBio" placeholder="No bio yet..." rows="3" readonly style="background: var(--sidebar-bg); cursor: not-allowed;"></textarea>
+                </div>
+                <div class="form-group">
+                    <label>Status</label>
+                    <div id="profileStatus" style="padding: 8px; background: var(--sidebar-bg); border-radius: 4px;">
+                        <span class="status-dot" style="margin-right: 8px;"></span>
+                        <span>Offline</span>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Mutual Groups</label>
+                    <div id="mutualGroupsList" style="max-height: 100px; overflow-y: auto; padding: 8px; background: var(--sidebar-bg); border-radius: 4px;">
+                        <span style="color: var(--text-tertiary);">No mutual groups</span>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-buttons">
+                <button class="btn btn-secondary" onclick="closeUserProfileModal()">Close</button>
+                <button class="btn btn-danger" onclick="blockUser()" id="blockUserBtn">Block User</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Media Gallery Modal -->
+    <div id="mediaGalleryModal" class="modal">
+        <div class="modal-content" style="max-width: 800px; max-height: 90vh;">
+            <div class="modal-header">
+                <span>Media Gallery</span>
+                <button class="close-btn" onclick="closeMediaGalleryModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div style="margin-bottom: 16px; display: flex; gap: 8px; border-bottom: 1px solid var(--border-color); padding-bottom: 8px;">
+                    <button class="btn btn-secondary" onclick="filterMediaGallery('all')" id="filterAll" style="flex: 1;">All</button>
+                    <button class="btn btn-secondary" onclick="filterMediaGallery('images')" id="filterImages" style="flex: 1;">Images</button>
+                    <button class="btn btn-secondary" onclick="filterMediaGallery('videos')" id="filterVideos" style="flex: 1;">Videos</button>
+                    <button class="btn btn-secondary" onclick="filterMediaGallery('files')" id="filterFiles" style="flex: 1;">Files</button>
+                </div>
+                <div id="mediaGalleryGrid" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; max-height: 60vh; overflow-y: auto;">
+                    <p style="color: var(--text-tertiary); text-align: center; padding: 20px;">No media found</p>
+                </div>
+            </div>
+            <div class="modal-buttons">
+                <button class="btn btn-secondary" onclick="closeMediaGalleryModal()">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Notification Settings Modal -->
+    <div id="notificationSettingsModal" class="modal">
+        <div class="modal-content" style="max-width: 450px;">
+            <div class="modal-header">
+                <span>Notification Settings</span>
+                <button class="close-btn" onclick="closeNotificationSettingsModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group checkbox-group">
+                    <input type="checkbox" id="enableNotifications" checked>
+                    <label for="enableNotifications">Enable Notifications</label>
+                </div>
+                <div class="form-group">
+                    <label>Mute Chat</label>
+                    <select id="muteDuration">
+                        <option value="0">Unmuted</option>
+                        <option value="3600">1 Hour</option>
+                        <option value="28800">8 Hours</option>
+                        <option value="86400">24 Hours</option>
+                        <option value="-1">Forever</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Notification Sound</label>
+                    <select id="notificationSound">
+                        <option value="default">Default</option>
+                        <option value="chime">Chime</option>
+                        <option value="ping">Ping</option>
+                        <option value="bell">Bell</option>
+                        <option value="none">None</option>
+                    </select>
+                </div>
+                <div class="form-group checkbox-group">
+                    <input type="checkbox" id="showPreview" checked>
+                    <label for="showPreview">Show Message Preview</label>
+                </div>
+            </div>
+            <div class="modal-buttons">
+                <button class="btn btn-secondary" onclick="closeNotificationSettingsModal()">Cancel</button>
+                <button class="btn btn-primary" onclick="saveNotificationSettings()">Save</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Lightbox for Media -->
+    <div id="mediaLightbox" class="modal" style="background: rgba(0,0,0,0.95);">
+        <div style="position: relative; width: 100%; height: 100%; display: flex; align-items: center; justify-content: center;">
+            <button class="close-btn" onclick="closeLightbox()" style="position: absolute; top: 20px; right: 20px; font-size: 40px; background: rgba(255,255,255,0.1); border-radius: 50%; width: 60px; height: 60px;">&times;</button>
+            <img id="lightboxImage" src="" alt="Full view" style="max-width: 90%; max-height: 90%; object-fit: contain;">
+        </div>
+    </div>
+
+    <!-- Notification -->
+    <div id="notification" class="notification">
+        <span id="notificationText"></span>
+    </div>
+
+    <script src="/static/chat.js"></script>
+</body>
+</html>
