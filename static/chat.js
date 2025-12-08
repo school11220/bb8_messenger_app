@@ -1648,8 +1648,21 @@ function hideCallUI() {
     if (voiceIndicator) voiceIndicator.remove();
 }
 
+function handleAnswerClick(button) {
+    const callId = button.dataset.callId;
+    const offer = button.dataset.offer;
+    console.log('Answer button clicked via handler, callId:', callId, 'offer length:', offer.length);
+    answerCall(callId, offer);
+    setTimeout(() => {
+        const notification = button.closest('.notification');
+        if (notification) notification.remove();
+    }, 100);
+}
+
 function showIncomingCallNotification(caller, callType, callId, offer) {
+    console.log('Showing incoming call notification for callId:', callId);
     const notification = document.createElement('div');
+    notification.className = 'notification';
     notification.style.cssText = 'position: fixed; top: 20px; right: 20px; background: var(--bg-secondary); padding: 20px; border-radius: 12px; box-shadow: var(--shadow-md); z-index: 10001; min-width: 300px;';
     notification.innerHTML = `
         <div style="margin-bottom: 16px;">
@@ -1657,15 +1670,17 @@ function showIncomingCallNotification(caller, callType, callId, offer) {
             <div style="font-size: 14px; color: var(--text-secondary); margin-top: 4px;">from ${caller}</div>
         </div>
         <div style="display: flex; gap: 12px;">
-            <button onclick="answerCall(${callId}, '${offer.replace(/'/g, "\\'")}'); setTimeout(() => this.parentElement.parentElement.remove(), 100);" class="btn-primary" style="flex: 1;">Answer</button>
+            <button onclick="handleAnswerClick(this)" data-call-id="${callId}" data-offer="${offer.replace(/"/g, '&quot;')}" class="btn-primary" style="flex: 1;">Answer</button>
             <button onclick="rejectCall(${callId}); this.parentElement.parentElement.remove();" class="btn-secondary" style="flex: 1;">Decline</button>
         </div>
     `;
     document.body.appendChild(notification);
+    console.log('Notification added to body');
 }
 
 // Socket handlers for calls
 socket.on('incoming_call', data => {
+    console.log('Received incoming_call:', data);
     currentCall = data;
     showIncomingCallNotification(data.caller, data.call_type, data.call_id, data.offer);
 });
