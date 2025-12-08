@@ -2741,23 +2741,23 @@ def handle_pin_message(data):
             # Get group members
             admins = GroupAdmin.query.filter_by(group_name=recipient).all()
             for admin in admins:
-                if admin.username in active_users:
+                if admin.username in online_users:
                     emit("message_pinned", {
                         "message_id": message_id,
                         "chat_id": chat_id
-                    }, room=active_users[admin.username])
+                    }, room=online_users[admin.username])
         else:
             # Emit to both users
-            if username in active_users:
+            if username in online_users:
                 emit("message_pinned", {
                     "message_id": message_id,
                     "chat_id": chat_id
-                }, room=active_users[username])
-            if recipient in active_users:
+                }, room=online_users[username])
+            if recipient in online_users:
                 emit("message_pinned", {
                     "message_id": message_id,
                     "chat_id": chat_id
-                }, room=active_users[recipient])
+                }, room=online_users[recipient])
         
     except Exception as e:
         print(f"Error pinning message: {e}")
@@ -2785,22 +2785,22 @@ def handle_unpin_message(data):
         if is_group:
             admins = GroupAdmin.query.filter_by(group_name=recipient).all()
             for admin in admins:
-                if admin.username in active_users:
+                if admin.username in online_users:
                     emit("message_unpinned", {
                         "message_id": message_id,
                         "chat_id": chat_id
-                    }, room=active_users[admin.username])
+                    }, room=online_users[admin.username])
         else:
-            if username in active_users:
+            if username in online_users:
                 emit("message_unpinned", {
                     "message_id": message_id,
                     "chat_id": chat_id
-                }, room=active_users[username])
-            if recipient in active_users:
+                }, room=online_users[username])
+            if recipient in online_users:
                 emit("message_unpinned", {
                     "message_id": message_id,
                     "chat_id": chat_id
-                }, room=active_users[recipient])
+                }, room=online_users[recipient])
         
     except Exception as e:
         print(f"Error unpinning message: {e}")
