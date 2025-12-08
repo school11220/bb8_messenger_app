@@ -1305,12 +1305,201 @@ def _ensure_message_columns_exist():
     return added
 
 
+def migrate_database_schema():
+    """Add missing columns to existing tables - runs on startup"""
+    try:
+        from sqlalchemy import inspect, text
+        inspector = inspect(db.engine)
+        
+        def column_exists(table_name, column_name):
+            try:
+                columns = [col['name'] for col in inspector.get_columns(table_name)]
+                return column_name in columns
+            except Exception:
+                return False
+        
+        def table_exists(table_name):
+            try:
+                return table_name in inspector.get_table_names()
+            except Exception:
+                return False
+        
+        migrations_applied = []
+        
+        # USER TABLE MIGRATIONS
+        if table_exists('user'):
+            user_migrations = [
+                ("status", "ALTER TABLE \"user\" ADD COLUMN status VARCHAR(50) DEFAULT 'online'"),
+                ("status_message", "ALTER TABLE \"user\" ADD COLUMN status_message VARCHAR(200)"),
+                ("last_seen", "ALTER TABLE \"user\" ADD COLUMN last_seen TIMESTAMP DEFAULT NOW()"),
+                ("avatar_url", "ALTER TABLE \"user\" ADD COLUMN avatar_url VARCHAR(500)"),
+                ("show_last_seen", "ALTER TABLE \"user\" ADD COLUMN show_last_seen BOOLEAN DEFAULT TRUE"),
+                ("show_read_receipts", "ALTER TABLE \"user\" ADD COLUMN show_read_receipts BOOLEAN DEFAULT TRUE"),
+                ("allow_messages_from", "ALTER TABLE \"user\" ADD COLUMN allow_messages_from VARCHAR(20) DEFAULT 'everyone'"),
+            ]
+            
+            with db.engine.connect() as conn:
+                for col_name, sql in user_migrations:
+                    if not column_exists('user', col_name):
+                        try:
+                            conn.execute(text(sql))
+                            conn.commit()
+                            migrations_applied.append(f"user.{col_name}")
+                        except Exception as e:
+                            if 'already exists' not in str(e).lower():
+                                print(f"[migration] Warning: Failed to add user.{col_name}: {e}")
+        
+        # MESSAGE TABLE MIGRATIONS
+        if table_exists('message'):
+            message_migrations = [
+                ("status", "ALTER TABLE message ADD COLUMN status VARCHAR(20) DEFAULT 'sent'"),
+                ("edited", "ALTER TABLE message ADD COLUMN edited BOOLEAN DEFAULT FALSE"),
+                ("message_type", "ALTER TABLE message ADD COLUMN message_type VARCHAR(20) DEFAULT 'text'"),
+                ("file_url", "ALTER TABLE message ADD COLUMN file_url VARCHAR(500)"),
+                ("file_name", "ALTER TABLE message ADD COLUMN file_name VARCHAR(255)"),
+                ("reply_to_id", "ALTER TABLE message ADD COLUMN reply_to_id INTEGER REFERENCES message(id)"),
+                ("pinned", "ALTER TABLE message ADD COLUMN pinned BOOLEAN DEFAULT FALSE"),
+                ("starred", "ALTER TABLE message ADD COLUMN starred BOOLEAN DEFAULT FALSE"),
+                ("deleted", "ALTER TABLE message ADD COLUMN deleted BOOLEAN DEFAULT FALSE"),
+                ("deleted_for", "ALTER TABLE message ADD COLUMN deleted_for VARCHAR(500)"),
+            ]
+            
+            with db.engine.connect() as conn:
+                for col_name, sql in message_migrations:
+                    if not column_exists('message', col_name):
+                        try:
+                            conn.execute(text(sql))
+                            conn.commit()
+                            migrations_applied.append(f"message.{col_name}")
+                        except Exception as e:
+                            if 'already exists' not in str(e).lower():
+                                print(f"[migration] Warning: Failed to add message.{col_name}: {e}")
+        
+        # CREATE MISSING TABLES
+        missing_tables = []
+        
+        if not table_exists('message_reaction'):
+            with db.engine.connect() as conn:
+                try:
+                    conn.execute(text("""
+                        CREATE TABLE IF NOT EXISTS message_reaction (
+                            id SERIAL PRIMARY KEY,
+                            message_id INTEGER NOT NULL REFERENCES message(id) ON DELETE CASCADE,
+                            username VARCHAR(100) NOT NULL,
+                            reaction VARCHAR(10) NOT NULL,
+                            timestamp TIMESTAMP DEFAULT NOW()
+                        )
+                    """))
+                    conn.commit()
+                    missing_tables.append('message_reaction')
+                except Exception as e:
+                    print(f"[migration] Warning: Failed to create message_reaction: {e}")
+        
+        if not table_exists('group_admin'):
+            with db.engine.connect() as conn:
+                try:
+                    conn.execute(text("""
+                        CREATE TABLE IF NOT EXISTS group_admin (
+                            id SERIAL PRIMARY KEY,
+                            group_name VARCHAR(100) NOT NULL,
+                            username VARCHAR(100) NOT NULL,
+                            role VARCHAR(50) DEFAULT 'member',
+                            can_add_members BOOLEAN DEFAULT FALSE,
+                            can_remove_members BOOLEAN DEFAULT FALSE,
+                            can_edit_info BOOLEAN DEFAULT FALSE,
+                            can_send_messages BOOLEAN DEFAULT TRUE,
+                            joined_at TIMESTAMP DEFAULT NOW(),
+                            UNIQUE(group_name, username)
+                        )
+                    """))
+                    conn.commit()
+                    missing_tables.append('group_admin')
+                except Exception as e:
+                    print(f"[migration] Warning: Failed to create group_admin: {e}")
+        
+        if not table_exists('device_session'):
+            with db.engine.connect() as conn:
+                try:
+                    conn.execute(text("""
+                        CREATE TABLE IF NOT EXISTS device_session (
+                            id SERIAL PRIMARY KEY,
+                            username VARCHAR(100) NOT NULL,
+                            device_name VARCHAR(100) NOT NULL,
+                            device_token VARCHAR(200) UNIQUE NOT NULL,
+                            paired_at TIMESTAMP DEFAULT NOW(),
+                            last_active TIMESTAMP DEFAULT NOW()
+                        )
+                    """))
+                    conn.commit()
+                    missing_tables.append('device_session')
+                except Exception as e:
+                    print(f"[migration] Warning: Failed to create device_session: {e}")
+        
+        if not table_exists('group_invitation'):
+            with db.engine.connect() as conn:
+                try:
+                    conn.execute(text("""
+                        CREATE TABLE IF NOT EXISTS group_invitation (
+                            id SERIAL PRIMARY KEY,
+                            group_name VARCHAR(100) NOT NULL,
+                            token VARCHAR(200) UNIQUE NOT NULL,
+                            created_by VARCHAR(100) NOT NULL,
+                            created_at TIMESTAMP DEFAULT NOW(),
+                            expires_at TIMESTAMP NOT NULL,
+                            max_uses INTEGER DEFAULT 1,
+                            current_uses INTEGER DEFAULT 0
+                        )
+                    """))
+                    conn.commit()
+                    missing_tables.append('group_invitation')
+                except Exception as e:
+                    print(f"[migration] Warning: Failed to create group_invitation: {e}")
+        
+        if not table_exists('call'):
+            with db.engine.connect() as conn:
+                try:
+                    conn.execute(text("""
+                        CREATE TABLE IF NOT EXISTS call (
+                            id SERIAL PRIMARY KEY,
+                            caller VARCHAR(100) NOT NULL,
+                            callee VARCHAR(100) NOT NULL,
+                            call_type VARCHAR(20) NOT NULL,
+                            status VARCHAR(20) DEFAULT 'initiated',
+                            started_at TIMESTAMP DEFAULT NOW(),
+                            ended_at TIMESTAMP,
+                            duration INTEGER DEFAULT 0
+                        )
+                    """))
+                    conn.commit()
+                    missing_tables.append('call')
+                except Exception as e:
+                    print(f"[migration] Warning: Failed to create call: {e}")
+        
+        if migrations_applied:
+            print(f"[migration] ✅ Added columns: {', '.join(migrations_applied)}")
+        if missing_tables:
+            print(f"[migration] ✅ Created tables: {', '.join(missing_tables)}")
+        if not migrations_applied and not missing_tables:
+            print("[migration] ✅ Schema up to date")
+        
+        return True
+    except Exception as e:
+        print(f"[migration] ⚠️ Migration failed: {e}")
+        return False
+
+
 # Run startup tasks: create tables, diagnostics, and heal schema drift
 with app.app_context():
     try:
         db.create_all()
     except Exception as e:
         print(f"[startup] db.create_all() failed: {e}")
+    
+    # Run automatic migration
+    try:
+        migrate_database_schema()
+    except Exception as e:
+        print(f"[startup] migrate_database_schema() failed: {e}")
 
     try:
         engine_name = getattr(db.engine, 'name', None)
