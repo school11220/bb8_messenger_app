@@ -1,5 +1,11 @@
 // ==================== SOCKET & STATE ====================
-const socket = io();
+const socket = io({
+    reconnection: true,
+    reconnectionDelay: 1000,
+    reconnectionDelayMax: 5000,
+    reconnectionAttempts: 5,
+    timeout: 10000
+});
 let username = null;
 let currentRecipient = null;
 const sharedKeys = {};
@@ -91,12 +97,64 @@ async function performAuth(endpoint, user, pass, errorEl) {
         return;
     }
     
+    // Check if socket is connected
+    if (!socket.connected) {
+        errorEl.textContent = 'Connecting to server...';
+        errorEl.style.display = 'block';
+        
+        // Wait for connection with timeout
+        let connectionTimeout;
+        const waitForConnection = new Promise((resolve, reject) => {
+            if (socket.connected) {
+                resolve();
+                return;
+            }
+            
+            const onConnect = () => {
+                socket.off('connect', onConnect);
+                socket.off('connect_error', onError);
+                clearTimeout(connectionTimeout);
+                resolve();
+            };
+            
+            const onError = (error) => {
+                socket.off('connect', onConnect);
+                socket.off('connect_error', onError);
+                clearTimeout(connectionTimeout);
+                reject(error);
+            };
+            
+            socket.on('connect', onConnect);
+            socket.on('connect_error', onError);
+            
+            connectionTimeout = setTimeout(() => {
+                socket.off('connect', onConnect);
+                socket.off('connect_error', onError);
+                reject(new Error('Connection timeout'));
+            }, 5000);
+        });
+        
+        try {
+            await waitForConnection;
+            errorEl.style.display = 'none';
+        } catch (error) {
+            errorEl.textContent = 'Cannot connect to server. Please check your connection.';
+            errorEl.style.display = 'block';
+            return;
+        }
+    }
+    
     try {
         const response = await fetch(endpoint, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ username: user, password: pass })
         });
+        
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        
         const data = await response.json();
         
         if (data.success) {
@@ -107,7 +165,12 @@ async function performAuth(endpoint, user, pass, errorEl) {
             errorEl.style.display = 'block';
         }
     } catch (error) {
-        errorEl.textContent = 'Connection error. Please try again.';
+        console.error('Auth error:', error);
+        if (error.name === 'TypeError' && error.message.includes('fetch')) {
+            errorEl.textContent = 'Cannot reach server. Please check your connection.';
+        } else {
+            errorEl.textContent = 'Connection error. Please try again.';
+        }
         errorEl.style.display = 'block';
     }
 }
@@ -944,11 +1007,49 @@ function clearChatHistory() {
 // ==================== SOCKET EVENTS ====================
 socket.on("connect", () => {
     console.log("Connected to server");
+    // Clear any login error messages
+    const loginError = byId('login-error');
+    const registerError = byId('register-error');
+    if (loginError) loginError.style.display = 'none';
+    if (registerError) registerError.style.display = 'none';
+    
     if (username) {
         socket.emit("register_user", username);
         socket.emit("update_status", { username, status: "online" });
         socket.emit("get_user_groups", { username });
     }
+});
+
+socket.on("connect_error", (error) => {
+    console.error("Connection error:", error);
+    const loginError = byId('login-error');
+    const registerError = byId('register-error');
+    if (loginError && loginError.parentElement.style.display !== 'none') {
+        loginError.textContent = 'Connection error. Please try again.';
+        loginError.style.display = 'block';
+    }
+    if (registerError && registerError.parentElement.style.display !== 'none') {
+        registerError.textContent = 'Connection error. Please try again.';
+        registerError.style.display = 'block';
+    }
+});
+
+socket.on("reconnect", (attemptNumber) => {
+    console.log("Reconnected after", attemptNumber, "attempts");
+    if (username) {
+        socket.emit("register_user", username);
+        socket.emit("update_status", { username, status: "online" });
+        socket.emit("get_user_groups", { username });
+    }
+});
+
+socket.on("reconnect_error", (error) => {
+    console.error("Reconnection error:", error);
+});
+
+socket.on("reconnect_failed", () => {
+    console.error("Reconnection failed");
+    showNotification("Connection lost. Please refresh the page.");
 });
 
 socket.on("disconnect", () => {
