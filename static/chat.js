@@ -1518,12 +1518,14 @@ async function initiateCall(callType) {
 }
 
 async function answerCall(callId, offer) {
+    console.log('Answer button clicked, callId:', callId, 'offer:', offer);
     try {
         const constraints = {
             audio: true,
             video: currentCall.call_type === 'video'
         };
         
+        console.log('Getting user media with constraints:', constraints);
         localStream = await navigator.mediaDevices.getUserMedia(constraints);
         
         peerConnection = new RTCPeerConnection(iceServers);
@@ -1549,10 +1551,12 @@ async function answerCall(callId, offer) {
             }
         };
         
+        console.log('Setting remote description');
         await peerConnection.setRemoteDescription(JSON.parse(offer));
         const answer = await peerConnection.createAnswer();
         await peerConnection.setLocalDescription(answer);
         
+        console.log('Emitting answer_call');
         socket.emit('answer_call', {
             call_id: callId,
             answer: JSON.stringify(answer),
@@ -1560,6 +1564,7 @@ async function answerCall(callId, offer) {
         });
         
         showCallUI(currentCall.call_type, 'active');
+        console.log('Call answered successfully');
     } catch (error) {
         console.error('Error answering call:', error);
         showNotification('Could not access camera/microphone');
@@ -1601,12 +1606,16 @@ function showCallUI(callType, status) {
     if (!callUI) {
         callUI = document.createElement('div');
         callUI.id = 'callUI';
-        callUI.style.cssText = 'position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.95); z-index: 10000; display: flex; flex-direction: column; align-items: center; justify-content: center;';
+        callUI.style.cssText = 'position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.95); z-index: 10000; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 20px; box-sizing: border-box;';
         callUI.innerHTML = `
-            <video id="remoteVideo" autoplay playsinline style="width: 80%; max-width: 800px; border-radius: 12px; margin-bottom: 20px;"></video>
-            <video id="localVideo" autoplay playsinline muted style="position: absolute; top: 20px; right: 20px; width: 200px; border-radius: 8px; border: 2px solid var(--accent-primary);"></video>
+            <div style="text-align: center; margin-bottom: 20px; color: white;">
+                <div style="font-size: 24px; font-weight: 600; margin-bottom: 8px;">${status === 'outgoing' ? 'Calling...' : 'On Call'}</div>
+                <div style="font-size: 18px; opacity: 0.8;">${currentRecipient || currentCall.caller}</div>
+            </div>
+            <video id="remoteVideo" autoplay playsinline style="width: 80%; max-width: 800px; border-radius: 12px; margin-bottom: 20px; background: #333;"></video>
+            <video id="localVideo" autoplay playsinline muted style="position: absolute; top: 20px; right: 20px; width: 150px; height: 100px; border-radius: 8px; border: 2px solid var(--accent-primary); object-fit: cover;"></video>
             <div style="display: flex; gap: 20px; margin-top: 20px;">
-                <button onclick="endCall()" class="call-btn end" style="background: var(--error); color: white; border: none; padding: 16px 24px; border-radius: 50px; cursor: pointer; font-size: 16px; font-weight: 600;">
+                <button onclick="endCall()" class="call-btn end" style="background: #ff4757; color: white; border: none; padding: 16px 32px; border-radius: 50px; cursor: pointer; font-size: 16px; font-weight: 600; min-width: 120px;">
                     End Call
                 </button>
             </div>
@@ -1622,12 +1631,21 @@ function showCallUI(callType, status) {
     if (callType === 'voice') {
         document.getElementById('localVideo').style.display = 'none';
         document.getElementById('remoteVideo').style.display = 'none';
+        // Add a voice call indicator
+        const voiceIndicator = document.createElement('div');
+        voiceIndicator.id = 'voiceCallIndicator';
+        voiceIndicator.style.cssText = 'width: 120px; height: 120px; border-radius: 50%; background: var(--accent-primary); display: flex; align-items: center; justify-content: center; margin: 20px auto;';
+        voiceIndicator.innerHTML = '<svg width="60" height="60" viewBox="0 0 24 24" fill="white"><path d="M12 1c-1.1 0-2 .9-2 2v8c0 1.1.9 2 2 2s2-.9 2-2V3c0-1.1-.9-2-2-2zm0 16c-2.76 0-5-2.24-5-5V9c0-.55-.45-1-1-1s-1 .45-1 1v3c0 3.87 3.13 7 7 7s7-3.13 7-7V9c0-.55-.45-1-1-1s-1 .45-1 1v3c0 2.76-2.24 5-5 5z"/></svg>';
+        const remoteVideo = document.getElementById('remoteVideo');
+        remoteVideo.parentNode.insertBefore(voiceIndicator, remoteVideo);
     }
 }
 
 function hideCallUI() {
     const callUI = document.getElementById('callUI');
+    const voiceIndicator = document.getElementById('voiceCallIndicator');
     if (callUI) callUI.remove();
+    if (voiceIndicator) voiceIndicator.remove();
 }
 
 function showIncomingCallNotification(caller, callType, callId, offer) {
@@ -1639,7 +1657,7 @@ function showIncomingCallNotification(caller, callType, callId, offer) {
             <div style="font-size: 14px; color: var(--text-secondary); margin-top: 4px;">from ${caller}</div>
         </div>
         <div style="display: flex; gap: 12px;">
-            <button onclick="answerCall(${callId}, '${offer.replace(/'/g, "\\'")}'); this.parentElement.parentElement.remove();" class="btn-primary" style="flex: 1;">Answer</button>
+            <button onclick="answerCall(${callId}, '${offer.replace(/'/g, "\\'")}'); setTimeout(() => this.parentElement.parentElement.remove(), 100);" class="btn-primary" style="flex: 1;">Answer</button>
             <button onclick="rejectCall(${callId}); this.parentElement.parentElement.remove();" class="btn-secondary" style="flex: 1;">Decline</button>
         </div>
     `;

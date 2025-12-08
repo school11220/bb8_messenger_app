@@ -1089,6 +1089,7 @@
                 height: 100vh;
                 max-height: none;
                 border-radius: 0;
+                padding: 0;
             }
 
             #sidebar {
@@ -1100,6 +1101,8 @@
                 z-index: 10;
                 background: var(--sidebar-bg);
                 transition: transform 0.3s ease;
+                padding: 20px;
+                box-sizing: border-box;
             }
 
             #chat-screen.chat-active #sidebar {
@@ -1108,10 +1111,20 @@
 
             #chat-window {
                 width: 100%;
+                padding: 0;
             }
 
             .mobile-back-btn {
                 display: flex !important;
+                background: var(--accent-primary);
+                color: white;
+                border: none;
+                border-radius: 50%;
+                width: 40px;
+                height: 40px;
+                align-items: center;
+                justify-content: center;
+                margin-right: 12px;
             }
 
             #chat-screen:not(.chat-active) #chat-window {
@@ -1120,28 +1133,61 @@
 
             .message {
                 max-width: 85%;
+                margin: 8px 16px;
+                padding: 12px 16px;
+                border-radius: 18px;
+                font-size: 16px;
+                line-height: 1.4;
             }
 
             .modal-content {
                 width: 95%;
                 max-width: none;
                 margin: 10px;
+                border-radius: 16px;
+                padding: 24px;
             }
 
             .auth-box {
                 width: 90%;
                 padding: 30px 20px;
+                border-radius: 16px;
             }
 
             /* Touch-friendly buttons */
             .btn-icon, .header-btn, button {
-                min-height: 44px;
-                min-width: 44px;
+                min-height: 48px;
+                min-width: 48px;
+                border-radius: 12px;
+                font-size: 16px;
+                font-weight: 500;
+            }
+
+            .btn-primary {
+                background: var(--accent-primary);
+                color: white;
+                border: none;
+                padding: 12px 24px;
+                border-radius: 12px;
+                font-weight: 600;
+            }
+
+            .btn-secondary {
+                background: var(--bg-tertiary);
+                color: var(--text-primary);
+                border: 1px solid var(--border-color);
+                padding: 12px 24px;
+                border-radius: 12px;
+                font-weight: 600;
             }
 
             /* Larger input on mobile */
             #messageInput {
                 font-size: 16px; /* Prevents zoom on iOS */
+                padding: 16px 20px;
+                border-radius: 24px;
+                border: 2px solid var(--border-color);
+                margin: 8px 16px;
             }
 
             /* Swipe indicator */
@@ -1166,8 +1212,8 @@
             }
 
             .swipe-action-btn {
-                width: 40px;
-                height: 40px;
+                width: 44px;
+                height: 44px;
                 border-radius: 50%;
                 background: var(--accent-primary);
                 border: none;
@@ -1176,6 +1222,7 @@
                 align-items: center;
                 justify-content: center;
                 cursor: pointer;
+                box-shadow: var(--shadow-sm);
             }
 
             /* Bottom navigation for mobile */
@@ -1184,18 +1231,28 @@
                 justify-content: space-around;
                 background: var(--bg-tertiary);
                 border-top: 1px solid var(--border-color);
-                padding: 8px 0;
+                padding: 12px 0;
+                position: fixed;
+                bottom: 0;
+                left: 0;
+                right: 0;
+                z-index: 100;
             }
 
             /* Voice player on mobile */
             .voice-player {
-                min-width: 220px;
+                min-width: 240px;
+                padding: 12px 16px;
+                border-radius: 20px;
+                background: var(--bg-secondary);
+                margin: 4px 0;
             }
 
             /* Hide header buttons text on mobile */
             .header-btn {
-                padding: 8px;
+                padding: 10px;
                 font-size: 0;
+                border-radius: 12px;
             }
 
             .header-btn svg {
@@ -1204,34 +1261,82 @@
 
             #chat-header-buttons {
                 display: flex;
-                gap: 4px;
+                gap: 6px;
                 flex-wrap: wrap;
             }
 
             #chat-header {
-                padding: 12px 16px;
-                gap: 8px;
+                padding: 16px 20px;
+                gap: 12px;
+                background: var(--bg-primary);
+                border-bottom: 1px solid var(--border-color);
+                box-shadow: var(--shadow-sm);
             }
 
             .chat-avatar {
-                width: 38px;
-                height: 38px;
-                font-size: 16px;
+                width: 42px;
+                height: 42px;
+                font-size: 18px;
+                border-radius: 50%;
             }
 
             .chat-info {
                 min-width: 0;
+                flex: 1;
             }
 
             .chat-name {
-                font-size: 14px;
+                font-size: 16px;
+                font-weight: 600;
                 white-space: nowrap;
                 overflow: hidden;
                 text-overflow: ellipsis;
+                color: var(--text-primary);
             }
 
             .chat-status {
-                font-size: 11px;
+                font-size: 12px;
+                color: var(--text-secondary);
+                margin-top: 2px;
+            }
+
+            /* Call UI on mobile */
+            #callUI {
+                padding: 20px;
+            }
+
+            #callUI video {
+                width: 90% !important;
+                border-radius: 16px;
+            }
+
+            #localVideo {
+                width: 120px !important;
+                top: 20px !important;
+                right: 20px !important;
+                border-radius: 12px;
+            }
+
+            /* Notification improvements */
+            .notification {
+                border-radius: 16px;
+                padding: 20px;
+                box-shadow: var(--shadow-lg);
+            }
+
+            /* Modal improvements */
+            .modal {
+                padding: 20px;
+            }
+
+            .modal-header {
+                font-size: 20px;
+                font-weight: 600;
+                margin-bottom: 20px;
+            }
+
+            .modal-body {
+                padding: 0;
             }
         }
 
