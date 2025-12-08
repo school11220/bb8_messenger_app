@@ -4,7 +4,10 @@ const socket = io({
     reconnectionDelay: 1000,
     reconnectionDelayMax: 5000,
     reconnectionAttempts: 5,
-    timeout: 10000
+    timeout: 20000,
+    transports: ['websocket', 'polling'],
+    upgrade: true,
+    rememberUpgrade: true
 });
 let username = null;
 let currentRecipient = null;
