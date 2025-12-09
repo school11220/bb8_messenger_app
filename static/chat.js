@@ -19,6 +19,9 @@ let allUsers = [];
 let allGroups = [];
 let replyToMessage = null;
 
+// Cache messages by id for quick lookup when rendering reply previews
+window.messageIndex = window.messageIndex || {};
+
 // Enhanced typing indicators - track who's typing in each conversation
 const typingUsers = {}; // { conversation_id: Set(['user1', 'user2']) }
 
@@ -38,6 +41,8 @@ const iceServers = {
         { urls: 'stun:stun1.l.google.com:19302' }
     ]
 };
+// Buffer incoming ICE candidates until remoteDescription is set
+let pendingIceCandidates = [];
 
 // ==================== HELPER FUNCTIONS ====================
 const byId = id => document.getElementById(id);
@@ -45,6 +50,136 @@ const byId = id => document.getElementById(id);
 function getInitials(name) {
     return name ? name.substring(0, 2).toUpperCase() : '??';
 }
+
+// Insert emoji at cursor position in the message input
+function insertEmoji() {
+    // Fallback insertion if EmojiButton not available
+    const emoji = '😄';
+    const input = byId('messageInput');
+    if (!input) return;
+    const start = input.selectionStart || input.value.length;
+    const end = input.selectionEnd || start;
+    input.value = input.value.substring(0, start) + emoji + input.value.substring(end);
+    input.focus();
+    const pos = start + emoji.length;
+    input.selectionStart = input.selectionEnd = pos;
+}
+
+// Setup UI interactions for new messages indicator and FAB
+document.addEventListener('DOMContentLoaded', () => {
+    const messagesEl = byId('messages');
+    const indicator = byId('newMessagesIndicator');
+    const fab = byId('newChatFab');
+
+    if (messagesEl) {
+        messagesEl.addEventListener('scroll', () => {
+            if (isMessagesAtBottom()) {
+                hideNewMessagesIndicator();
+            }
+        });
+    }
+
+    if (indicator) {
+        indicator.addEventListener('click', () => {
+            const el = byId('messages');
+            if (el) {
+                el.scrollTop = el.scrollHeight;
+            }
+            hideNewMessagesIndicator();
+        });
+    }
+
+    if (fab) {
+        fab.addEventListener('click', () => {
+            const name = prompt('Start a chat with (username):');
+            if (name) {
+                // If user exists in list, select; else add temporary entry
+                const existing = Array.from(document.querySelectorAll('#userList li')).find(li => li.dataset.username === name);
+                if (existing) {
+                    existing.click();
+                } else {
+                    // Create a temporary entry and select it
+                    const li = document.createElement('li');
+                    li.dataset.username = name;
+                    const avatar = document.createElement('div');
+                    avatar.className = 'user-avatar';
+                    avatar.innerHTML = getInitials(name);
+                    const info = document.createElement('div');
+                    info.className = 'user-info';
+                    const nm = document.createElement('div'); nm.className = 'user-name'; nm.textContent = name;
+                    const lastRow = document.createElement('div'); lastRow.style.display = 'flex'; lastRow.style.alignItems = 'center'; lastRow.style.gap='8px';
+                    const lastMsg = document.createElement('div'); lastMsg.className = 'user-last-message'; lastMsg.textContent = 'Tap to start chatting';
+                    const meta = document.createElement('div'); meta.className = 'user-last-meta'; meta.textContent = '';
+                    lastRow.appendChild(lastMsg); lastRow.appendChild(meta);
+                    info.appendChild(nm); info.appendChild(lastRow);
+                    li.appendChild(avatar); li.appendChild(info);
+                    document.getElementById('userList').prepend(li);
+                    li.click();
+                }
+            }
+        });
+    }
+
+    // Initialize Emoji picker with a custom lightweight popup (fallback if external lib fails)
+    (function initCustomEmojiPicker() {
+        const emojiBtn = byId('emojiBtn');
+        if (!emojiBtn) return;
+
+        // Keep a single picker element
+        let pickerEl = null;
+        const EMOJIS = ['👍','❤️','😂','😮','😢','🎉','🔥','👏','🙏','😅','🤔','😍','😎','🤩','🤝','🎯','🙌','😴','🫡','💯','✨','🙂','😊','😜','😇','🤗','😬','😳','🤖','👋','🙏','🥳','🤝'];
+
+        function createPicker() {
+            pickerEl = document.createElement('div');
+            pickerEl.className = 'emoji-picker-panel';
+            pickerEl.style.cssText = 'position: absolute; display: grid; grid-template-columns: repeat(6, 36px); gap: 8px; padding: 12px; background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 12px; box-shadow: var(--shadow-md); z-index: 99999; width: max-content; max-width: 300px;';
+            EMOJIS.forEach(emoji => {
+                const b = document.createElement('button');
+                b.type = 'button';
+                b.textContent = emoji;
+                b.style.cssText = 'font-size: 20px; background: none; border: none; cursor: pointer; padding: 6px; border-radius: 6px;';
+                b.onclick = () => {
+                    const input = byId('messageInput');
+                    if (!input) return;
+                    const start = input.selectionStart || input.value.length;
+                    const end = input.selectionEnd || start;
+                    input.value = input.value.substring(0, start) + emoji + input.value.substring(end);
+                    input.focus();
+                    const pos = start + emoji.length;
+                    input.selectionStart = input.selectionEnd = pos;
+                    hidePicker();
+                };
+                pickerEl.appendChild(b);
+            });
+            document.body.appendChild(pickerEl);
+            document.addEventListener('click', function closePicker(e) {
+                if (!pickerEl) return;
+                if (!pickerEl.contains(e.target) && e.target !== emojiBtn) {
+                    hidePicker();
+                    document.removeEventListener('click', closePicker);
+                }
+            });
+        }
+
+        function showPicker() {
+            if (!pickerEl) createPicker();
+            const rect = emojiBtn.getBoundingClientRect();
+            pickerEl.style.left = (rect.left) + 'px';
+            pickerEl.style.top = (rect.top - pickerEl.offsetHeight - 8) + 'px';
+            pickerEl.style.display = 'grid';
+        }
+
+        function hidePicker() {
+            if (!pickerEl) return;
+            pickerEl.style.display = 'none';
+        }
+
+        emojiBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            if (!pickerEl || pickerEl.style.display === 'none') showPicker(); else hidePicker();
+        });
+    })();
+});
 
 function showNotification(message) {
     const notif = byId('notification');
@@ -294,12 +429,31 @@ function updateUserList(users) {
         name.className = "user-name";
         name.textContent = group.name;
         
+        const lastRow = document.createElement('div');
+        lastRow.style.display = 'flex';
+        lastRow.style.alignItems = 'center';
+        lastRow.style.gap = '8px';
+
         const lastMsg = document.createElement("div");
         lastMsg.className = "user-last-message";
         lastMsg.textContent = `${group.member_count} members`;
-        
+
+        const meta = document.createElement('div');
+        meta.className = 'user-last-meta';
+        meta.textContent = '';
+
+        lastRow.appendChild(lastMsg);
+        lastRow.appendChild(meta);
+
+        // Populate last message preview and timestamp if available
+        const lm = window.lastMessages?.[group.name];
+        if (lm) {
+            lastMsg.textContent = lm.text || `${group.member_count} members`;
+            meta.textContent = lm.timestamp ? formatTime(lm.timestamp) : '';
+        }
+
         info.appendChild(name);
-        info.appendChild(lastMsg);
+        info.appendChild(lastRow);
         
         li.appendChild(avatar);
         li.appendChild(info);
@@ -341,19 +495,45 @@ function updateUserList(users) {
         name.className = "user-name";
         name.textContent = u;
         
+        const lastRow = document.createElement('div');
+        lastRow.style.display = 'flex';
+        lastRow.style.alignItems = 'center';
+        lastRow.style.gap = '8px';
+
         const lastMsg = document.createElement("div");
         lastMsg.className = "user-last-message";
         lastMsg.textContent = "Tap to start chatting";
-        
+
+        const meta = document.createElement('div');
+        meta.className = 'user-last-meta';
+        meta.textContent = '';
+
+        lastRow.appendChild(lastMsg);
+        lastRow.appendChild(meta);
+
+        // Populate last message preview and timestamp if available
+        const lm = window.lastMessages?.[u];
+        if (lm) {
+            lastMsg.textContent = lm.text || 'Tap to start chatting';
+            meta.textContent = lm.timestamp ? formatTime(lm.timestamp) : '';
+        }
+
         info.appendChild(name);
-        info.appendChild(lastMsg);
+        info.appendChild(lastRow);
+
+        // unread badge
+        const unread = document.createElement('span');
+        unread.className = 'unread-badge';
+        unread.style.display = 'none';
+        unread.dataset.username = u;
+        info.appendChild(unread);
         
         li.appendChild(avatar);
         li.appendChild(info);
         
         if (u === currentRecipient) li.classList.add('active');
 
-        li.onclick = () => selectUser(u, li);
+        li.onclick = () => { selectUser(u, li); clearUnread(u); };
         userList.appendChild(li);
     });
 
@@ -430,6 +610,9 @@ function appendMessage(sender, message, data = {}) {
     const welcome = byId('welcome');
     if (welcome) welcome.remove();
     
+    // Track whether user is at the bottom before adding
+    const wasAtBottom = isMessagesAtBottom();
+
     // Add date separator if needed
     const msgDate = data.timestamp ? new Date(data.timestamp) : new Date();
     const dateStr = formatDate(msgDate);
@@ -450,6 +633,7 @@ function appendMessage(sender, message, data = {}) {
     msgDiv.classList.add("message");
     msgDiv.classList.add(sender === username ? "sent" : "received");
     msgDiv.dataset.messageId = data.id || Date.now();
+    const msgId = msgDiv.dataset.messageId;
     
     if (!isCluster) {
         msgDiv.classList.add("first");
@@ -465,11 +649,19 @@ function appendMessage(sender, message, data = {}) {
         }
     }
     
-    // Avatar (only show for first message in cluster)
+    // Avatar (show for received messages only, and not for clusters)
     if (!isCluster && sender !== username) {
         const avatar = document.createElement("div");
         avatar.className = "message-avatar";
-        avatar.textContent = getInitials(sender);
+        const avatarUrl = window.userData?.[sender]?.avatar_url;
+        if (avatarUrl) {
+            avatar.style.backgroundImage = `url(${avatarUrl})`;
+            avatar.style.backgroundSize = 'cover';
+            avatar.style.backgroundPosition = 'center';
+            avatar.textContent = '';
+        } else {
+            avatar.textContent = getInitials(sender);
+        }
         msgDiv.appendChild(avatar);
     }
     
@@ -479,8 +671,8 @@ function appendMessage(sender, message, data = {}) {
     const bubble = document.createElement("div");
     bubble.className = "message-bubble";
     
-    // Sender name (only for first in cluster)
-    if (!isCluster && sender !== username) {
+    // Sender name (only for first in cluster and only for groups)
+    if (!isCluster && sender !== username && (data.group_id || (currentRecipient && String(currentRecipient).startsWith('group_')))) {
         const senderName = document.createElement("div");
         senderName.className = "sender-name";
         senderName.textContent = sender;
@@ -531,6 +723,55 @@ function appendMessage(sender, message, data = {}) {
         msgText.textContent = message;
         msgContent.appendChild(msgText);
     }
+    // Cache message by id for later lookups (used by reply previews and jump-to-original)
+    try {
+        if (msgId) {
+            window.messageIndex[msgId] = { text: message, sender: sender, timestamp: data.timestamp };
+            console.log('messageIndex store', msgId, window.messageIndex[msgId]);
+        }
+    } catch (e) {
+        console.warn('messageIndex store failed', e);
+    }
+
+    // Reply preview block (if present) — make robust: use server-sent preview, cached message, or fetch from server
+    if (data.reply_preview || data.reply_to_id) {
+        console.log('appendMessage: has reply_to_id', data.reply_to_id, 'reply_preview:', data.reply_preview);
+        let previewText = data.reply_preview || '';
+        let previewSender = data.reply_preview_sender || '';
+        const replyId = data.reply_to_id;
+
+        if (!previewText && replyId && window.messageIndex && window.messageIndex[replyId]) {
+            previewText = window.messageIndex[replyId].text;
+            previewSender = window.messageIndex[replyId].sender;
+        }
+
+        const replyBlock = document.createElement('div');
+        replyBlock.className = 'reply-preview';
+        replyBlock.dataset.replyTo = replyId || '';
+        replyBlock.innerHTML = `<div class="reply-sender-small">${previewSender || ''}</div><div class="reply-text-small">${previewText || 'Reply'}</div>`;
+        replyBlock.style.cursor = 'pointer';
+        replyBlock.title = 'Jump to original message';
+        replyBlock.onclick = () => {
+            if (replyId) jumpToOriginal(replyId);
+            else showNotification('Original message not available');
+        };
+
+        // If we don't have preview text yet, ask server to fetch it (will update when response arrives)
+        if (!previewText && replyId) {
+            console.log('appendMessage: preview not found locally, attempting server fetch for', replyId);
+            try {
+                socket.emit('fetch_message_by_id', { message_id: replyId });
+                // show fetching indicator
+                const small = replyBlock.querySelector('.reply-text-small');
+                if (small) small.textContent = 'Fetching…';
+            } catch (e) {
+                console.warn('fetch_message_by_id emit failed', e);
+            }
+        }
+
+        // Insert reply block at top of bubble
+        bubble.insertBefore(replyBlock, bubble.firstChild);
+    }
     
     bubble.appendChild(msgContent);
     
@@ -557,9 +798,110 @@ function appendMessage(sender, message, data = {}) {
     content.appendChild(bubble);
     msgDiv.appendChild(content);
     msgContainer.appendChild(msgDiv);
-    
+    // attach interactions
+    try { attachMessageInteraction(msgDiv, msgDiv.dataset.messageId, sender); } catch(e){}
+    // update last-message preview
+    updateLastMessagePreview(sender, message, data.timestamp);
     lastMessageSender = sender;
-    msgContainer.scrollTop = msgContainer.scrollHeight;
+    // If user was at bottom, auto-scroll. Otherwise show new messages indicator.
+    if (wasAtBottom) {
+        msgContainer.scrollTop = msgContainer.scrollHeight;
+        hideNewMessagesIndicator();
+    } else {
+        showNewMessagesIndicator();
+    }
+
+    // Subtle arrival animation highlight on bubble
+    try {
+        bubble.classList.add('arrival');
+        setTimeout(() => bubble.classList.remove('arrival'), 700);
+    } catch (e) {}
+}
+
+// Unread badge helpers
+window.unreadCounts = window.unreadCounts || {};
+function incrementUnreadBadge(usernameKey) {
+    window.unreadCounts[usernameKey] = (window.unreadCounts[usernameKey] || 0) + 1;
+    const item = document.querySelector(`#userList li[data-username="${usernameKey}"]`);
+    if (item) {
+        const badge = item.querySelector('.unread-badge');
+        if (badge) {
+            badge.textContent = window.unreadCounts[usernameKey];
+            badge.style.display = 'inline-block';
+        }
+    }
+}
+
+function clearUnread(usernameKey) {
+    window.unreadCounts[usernameKey] = 0;
+    const item = document.querySelector(`#userList li[data-username="${usernameKey}"]`);
+    if (item) {
+        const badge = item.querySelector('.unread-badge');
+        if (badge) badge.style.display = 'none';
+    }
+}
+
+function updateLastMessagePreview(usernameKey, text, timestamp) {
+    window.lastMessages = window.lastMessages || {};
+    window.lastMessages[usernameKey] = { text, timestamp };
+    const item = document.querySelector(`#userList li[data-username="${usernameKey}"]`);
+    if (item) {
+        const lastMsg = item.querySelector('.user-last-message');
+        const meta = item.querySelector('.user-last-meta');
+        if (lastMsg) lastMsg.textContent = text ? (text.length > 40 ? text.substring(0,40)+'…' : text) : '';
+        if (meta) meta.textContent = timestamp ? formatTime(timestamp) : '';
+        // bump item to top (optional) -- commented out
+        // item.parentNode.prepend(item);
+    }
+}
+
+// Attach context menu and long-press handlers to a message div
+function attachMessageInteraction(msgDiv, messageId, sender) {
+    // right-click
+    msgDiv.addEventListener('contextmenu', (e) => {
+        e.preventDefault();
+        const x = e.clientX;
+        const y = e.clientY;
+        showMessageOptionsAt(messageId, sender, x, y);
+    });
+
+    // long-press for touch devices
+    let pressTimer = null;
+    msgDiv.addEventListener('touchstart', (e) => {
+        pressTimer = setTimeout(() => {
+            const touch = e.touches[0];
+            showMessageOptionsAt(messageId, sender, touch.clientX, touch.clientY);
+        }, 600);
+    });
+    msgDiv.addEventListener('touchend', () => { if (pressTimer) clearTimeout(pressTimer); });
+}
+
+function showMessageOptionsAt(messageId, sender, x, y) {
+    showMessageOptions(messageId, sender);
+    const menu = document.querySelector('.message-options-menu');
+    if (menu) {
+        menu.style.left = (x + 8) + 'px';
+        menu.style.top = (y + 8) + 'px';
+    }
+}
+
+// Auto-scroll indicator helpers
+function isMessagesAtBottom() {
+    const el = byId('messages');
+    if (!el) return true;
+    return (el.scrollHeight - el.scrollTop - el.clientHeight) < 40;
+}
+
+function showNewMessagesIndicator() {
+    const el = byId('newMessagesIndicator');
+    if (!el) return;
+    el.style.display = 'block';
+}
+
+function hideNewMessagesIndicator() {
+    const el = byId('newMessagesIndicator');
+    if (!el) return;
+    el.style.display = 'none';
 }
 
 function renderReactions(container, reactions) {
@@ -602,6 +944,15 @@ function showTypingIndicator(sender, conversationId) {
     
     if (!isCurrentConversation) return;
     
+    // show header small typing status
+    const headerStatus = byId('chat-partner-status');
+    if (headerStatus && conversationId === currentRecipient) {
+        const dot = headerStatus.querySelector('.status-dot');
+        const text = headerStatus.querySelector('span:last-child');
+        if (text) text.textContent = 'typing...';
+        if (dot) dot.style.opacity = '0.7';
+    }
+
     updateTypingIndicatorDisplay(conversationId);
 }
 
@@ -617,6 +968,13 @@ function hideTypingIndicator(sender, conversationId) {
     }
     
     updateTypingIndicatorDisplay(conversationId);
+    const headerStatus = byId('chat-partner-status');
+    if (headerStatus && conversationId === currentRecipient) {
+        const dot = headerStatus.querySelector('.status-dot');
+        const text = headerStatus.querySelector('span:last-child');
+        if (text) text.textContent = userStatuses[currentRecipient] === 'online' ? 'Online' : (userStatuses[currentRecipient] || 'Offline');
+        if (dot) dot.style.opacity = '';
+    }
 }
 
 function updateTypingIndicatorDisplay(conversationId) {
@@ -819,7 +1177,8 @@ function sendMessage() {
         };
         
         if (replyToMessage) {
-            messageData.reply_to_id = replyToMessage.id;
+            // send numeric id to server for DB lookup
+            messageData.reply_to_id = Number(replyToMessage.id);
         }
         
         if (isGroup) {
@@ -827,6 +1186,7 @@ function sendMessage() {
             socket.emit("send_group_message", messageData);
         } else {
             messageData.recipient = currentRecipient;
+            console.log('sendMessage emitting send_message', messageData);
             socket.emit("send_message", messageData);
         }
         
@@ -1092,6 +1452,7 @@ socket.on("history_cleared", () => {
 });
 
 socket.on("receive_message", data => {
+    console.log('receive_message payload:', data);
     const partner = data.sender === username ? currentRecipient : data.sender;
     if (partner && data.key) {
         sharedKeys[partner] = data.key;
@@ -1105,6 +1466,8 @@ socket.on("receive_message", data => {
         }
     } else if (data.sender !== username) {
         showNotification(`New message from ${data.sender}`);
+        // increment unread count and badge
+        incrementUnreadBadge(data.sender);
     }
 });
 
@@ -1279,6 +1642,9 @@ function showMessageOptions(messageId, sender) {
         </div>
     `;
     document.body.appendChild(menu);
+    // Default center position; if caller supplied coordinates, they will be applied by caller.
+    menu.style.left = (window.innerWidth/2 - menu.offsetWidth/2) + 'px';
+    menu.style.top = (window.innerHeight/2 - menu.offsetHeight/2) + 'px';
     
     setTimeout(() => {
         document.addEventListener('click', function closeMenu(e) {
@@ -1367,7 +1733,8 @@ function replyToMessageFunc(messageId) {
     const sender = messageDiv.querySelector('.sender-name')?.textContent || 
                    (messageDiv.classList.contains('sent') ? username : currentRecipient);
     
-    replyToMessage = { id: messageId, text: messageText, sender: sender };
+    replyToMessage = { id: String(messageId), text: messageText, sender: sender };
+    console.log('replyToMessage set', replyToMessage);
     
     const replyPreview = document.getElementById('replyPreview') || createReplyPreview();
     replyPreview.querySelector('.reply-text').textContent = messageText;
@@ -1399,7 +1766,7 @@ function cancelReply() {
 }
 
 function addReactionToMessage(messageId) {
-    const reactions = ['👍', '❤️', '😂', '😮', '😢', '🎉', '🔥', '👏'];
+    const reactions = ['👍','❤️','😂','😮','😢','🎉','🔥','👏','🙏','😅','🤔','😍','😎','🤩','🤝','🎯','🙌','😴','🫡','💯','✨'];
     const menu = document.createElement('div');
     menu.className = 'reaction-picker';
     menu.style.cssText = 'position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); background: var(--bg-secondary); padding: 12px; border-radius: 12px; box-shadow: var(--shadow-md); display: flex; gap: 8px; z-index: 10000;';
@@ -1553,6 +1920,18 @@ async function answerCall(callId, offer) {
         
         console.log('Setting remote description');
         await peerConnection.setRemoteDescription(JSON.parse(offer));
+        // After setting remote description, drain any queued ICE candidates
+        if (pendingIceCandidates.length) {
+            console.log('Draining', pendingIceCandidates.length, 'pending ICE candidates after answer');
+            for (const pending of pendingIceCandidates) {
+                try {
+                    await peerConnection.addIceCandidate(new RTCIceCandidate(pending.candidate));
+                } catch (err) {
+                    console.warn('Error adding pending ICE candidate after answer:', err);
+                }
+            }
+            pendingIceCandidates = [];
+        }
         const answer = await peerConnection.createAnswer();
         await peerConnection.setLocalDescription(answer);
         
@@ -1651,7 +2030,11 @@ function hideCallUI() {
 function handleAnswerClick(button) {
     const callId = button.dataset.callId;
     const offer = button.dataset.offer;
-    console.log('Answer button clicked via handler, callId:', callId, 'offer length:', offer.length);
+    console.log('Answer button clicked via handler, callId:', callId, 'offer length:', offer ? offer.length : 'undefined');
+    if (!offer) {
+        console.error('No offer data found on button');
+        return;
+    }
     answerCall(callId, offer);
     setTimeout(() => {
         const notification = button.closest('.notification');
@@ -1660,22 +2043,61 @@ function handleAnswerClick(button) {
 }
 
 function showIncomingCallNotification(caller, callType, callId, offer) {
-    console.log('Showing incoming call notification for callId:', callId);
+    console.log('Showing incoming call notification for callId:', callId, 'offer length:', offer ? offer.length : 'undefined');
     const notification = document.createElement('div');
     notification.className = 'notification';
     notification.style.cssText = 'position: fixed; top: 20px; right: 20px; background: var(--bg-secondary); padding: 20px; border-radius: 12px; box-shadow: var(--shadow-md); z-index: 10001; min-width: 300px;';
-    notification.innerHTML = `
-        <div style="margin-bottom: 16px;">
-            <div style="font-size: 18px; font-weight: 600; color: var(--text-primary);">Incoming ${callType} call</div>
-            <div style="font-size: 14px; color: var(--text-secondary); margin-top: 4px;">from ${caller}</div>
-        </div>
-        <div style="display: flex; gap: 12px;">
-            <button onclick="handleAnswerClick(this)" data-call-id="${callId}" data-offer="${offer.replace(/"/g, '&quot;')}" class="btn-primary" style="flex: 1;">Answer</button>
-            <button onclick="rejectCall(${callId}); this.parentElement.parentElement.remove();" class="btn-secondary" style="flex: 1;">Decline</button>
-        </div>
-    `;
+
+    // Create elements instead of innerHTML to avoid string escaping issues
+    const contentDiv = document.createElement('div');
+    contentDiv.style.marginBottom = '16px';
+
+    const titleDiv = document.createElement('div');
+    titleDiv.style.fontSize = '18px';
+    titleDiv.style.fontWeight = '600';
+    titleDiv.style.color = 'var(--text-primary)';
+    titleDiv.textContent = `Incoming ${callType} call`;
+
+    const callerDiv = document.createElement('div');
+    callerDiv.style.fontSize = '14px';
+    callerDiv.style.color = 'var(--text-secondary)';
+    callerDiv.style.marginTop = '4px';
+    callerDiv.textContent = `from ${caller}`;
+
+    contentDiv.appendChild(titleDiv);
+    contentDiv.appendChild(callerDiv);
+
+    const buttonsDiv = document.createElement('div');
+    buttonsDiv.style.display = 'flex';
+    buttonsDiv.style.gap = '12px';
+
+    const answerButton = document.createElement('button');
+    answerButton.className = 'btn-primary';
+    answerButton.style.flex = '1';
+    answerButton.textContent = 'Answer';
+    answerButton.dataset.callId = callId;
+    answerButton.dataset.offer = offer;
+    answerButton.addEventListener('click', () => handleAnswerClick(answerButton));
+
+    const declineButton = document.createElement('button');
+    declineButton.className = 'btn-secondary';
+    declineButton.style.flex = '1';
+    declineButton.textContent = 'Decline';
+    declineButton.addEventListener('click', () => {
+        rejectCall(callId);
+        notification.remove();
+    });
+
+    buttonsDiv.appendChild(answerButton);
+    buttonsDiv.appendChild(declineButton);
+
+    notification.appendChild(contentDiv);
+    notification.appendChild(buttonsDiv);
+
     document.body.appendChild(notification);
-    console.log('Notification added to body');
+    // Make visible (CSS .notification is hidden by default)
+    notification.classList.add('show');
+    console.log('Notification added to body with buttons');
 }
 
 // Socket handlers for calls
@@ -1688,6 +2110,18 @@ socket.on('incoming_call', data => {
 socket.on('call_answered', async data => {
     if (peerConnection) {
         await peerConnection.setRemoteDescription(JSON.parse(data.answer));
+        // drain any pending ICE candidates that arrived before remoteDescription was set
+        if (pendingIceCandidates.length) {
+            console.log('Draining', pendingIceCandidates.length, 'pending ICE candidates');
+            for (const pending of pendingIceCandidates) {
+                try {
+                    await peerConnection.addIceCandidate(new RTCIceCandidate(pending.candidate));
+                } catch (err) {
+                    console.warn('Error adding pending ICE candidate:', err);
+                }
+            }
+            pendingIceCandidates = [];
+        }
     }
 });
 
@@ -1702,12 +2136,20 @@ socket.on('call_ended', data => {
 });
 
 socket.on('ice_candidate', async data => {
-    if (peerConnection && data.candidate) {
+    // Buffer ICE candidates if remote description is not yet set
+    if (!data || !data.candidate) return;
+    const candidate = data.candidate;
+    const fromUser = data.from || data.caller || null;
+    if (peerConnection && peerConnection.remoteDescription && peerConnection.remoteDescription.type) {
         try {
-            await peerConnection.addIceCandidate(new RTCIceCandidate(data.candidate));
+            await peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
         } catch (error) {
             console.error('Error adding ICE candidate:', error);
         }
+    } else {
+        // store with metadata to filter later if needed
+        pendingIceCandidates.push({ candidate, from: fromUser });
+        console.log('Queued ICE candidate from', fromUser);
     }
 });
 
@@ -1739,6 +2181,40 @@ socket.on('message_deleted', data => {
         }
     }
 });
+
+// Handler for server response when fetching a message by id
+socket.on('fetched_message', data => {
+    if (!data || !data.message_id) return;
+    const id = String(data.message_id);
+    // Store in cache
+    window.messageIndex = window.messageIndex || {};
+    window.messageIndex[id] = { text: data.message || '', sender: data.sender || '', timestamp: data.timestamp };
+    console.log('fetched_message received', id, window.messageIndex[id]);
+
+    // Update any reply-preview placeholders that were waiting for this message
+    const placeholders = document.querySelectorAll(`.reply-preview[data-reply-to="${id}"]`);
+    placeholders.forEach(ph => {
+        const senderEl = ph.querySelector('.reply-sender-small');
+        const textEl = ph.querySelector('.reply-text-small');
+        if (senderEl) senderEl.textContent = data.sender || '';
+        if (textEl) textEl.textContent = data.message || '';
+    });
+});
+
+function jumpToOriginal(messageId) {
+    if (!messageId) return;
+    const id = String(messageId);
+    const el = document.querySelector(`[data-message-id="${id}"]`);
+    if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        el.classList.add('reply-target-highlight');
+        setTimeout(() => el.classList.remove('reply-target-highlight'), 1400);
+    } else {
+        // If not found in DOM, ask server to fetch so user can navigate later
+        socket.emit('fetch_message_by_id', { message_id: id });
+        showNotification('Fetching original message...');
+    }
+}
 
 // Add message long-press/right-click handler
 document.addEventListener('DOMContentLoaded', () => {
@@ -2878,5 +3354,66 @@ socket.on('paired_user_info', data => {
         // Auto-login the user
         username = data.username;
         startChatSession(username);
+    }
+});
+
+// ==================== MOBILE KEYBOARD / AUTO-SCROLL HELPERS ====================
+// Ensure messages scroll to bottom when input is focused or when the mobile keyboard opens
+function scrollMessagesToBottom(smooth = false) {
+    const el = byId('messages');
+    if (!el) return;
+    try {
+        if (smooth) el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
+        else el.scrollTop = el.scrollHeight;
+    } catch (e) {
+        el.scrollTop = el.scrollHeight;
+    }
+}
+
+// VisualViewport helps detect keyboard opening on modern mobile browsers
+let lastViewportHeight = (window.visualViewport && window.visualViewport.height) || window.innerHeight;
+function handleViewportResize() {
+    const vh = (window.visualViewport && window.visualViewport.height) || window.innerHeight;
+    // If viewport height decreased substantially, likely keyboard opened — scroll to bottom
+    if (vh < lastViewportHeight - 80) {
+        setTimeout(() => scrollMessagesToBottom(true), 120);
+    }
+    lastViewportHeight = vh;
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    const input = byId('messageInput');
+    if (input) {
+        input.addEventListener('focus', () => {
+            setTimeout(() => scrollMessagesToBottom(true), 200);
+        });
+        input.addEventListener('blur', () => {
+            // optional: adjust viewport after blur
+            setTimeout(() => scrollMessagesToBottom(false), 150);
+        });
+    }
+
+    if (window.visualViewport) {
+        window.visualViewport.addEventListener('resize', handleViewportResize);
+    } else {
+        // Fallback for browsers that don't support visualViewport
+        window.addEventListener('resize', handleViewportResize);
+    }
+
+    // Also ensure we scroll to bottom when new messages arrive (safety net)
+    const messagesEl = byId('messages');
+    if (messagesEl) {
+        const observer = new MutationObserver((mutations) => {
+            for (const m of mutations) {
+                if (m.addedNodes && m.addedNodes.length) {
+                    // Auto-scroll if input is focused or near bottom
+                    const inputFocused = document.activeElement === input;
+                    const atBottom = isMessagesAtBottom();
+                    if (inputFocused || atBottom) scrollMessagesToBottom(true);
+                    break;
+                }
+            }
+        });
+        observer.observe(messagesEl, { childList: true, subtree: false });
     }
 });

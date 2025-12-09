@@ -764,6 +764,22 @@ def handle_send_message(data):
 
     # Send to recipient
     if recipient in online_users:
+        # include reply preview if possible
+        reply_preview = None
+        reply_preview_sender = None
+        if reply_to_id:
+            try:
+                ref = Message.query.get(reply_to_id)
+                if ref:
+                    reply_preview = xor_decrypt(ref.encrypted_message, get_shared_key(ref.sender, ref.recipient))
+                    reply_preview_sender = ref.sender
+            except Exception:
+                reply_preview = None
+        try:
+            logger.info(f"send_message reply_preview id={message_id} reply_to={reply_to_id} preview={'yes' if reply_preview else 'no'}")
+        except Exception:
+            pass
+
         emit("receive_message", {
             "id": message_id,
             "sender": sender, 
@@ -775,12 +791,26 @@ def handle_send_message(data):
             "message_type": message_type,
             "file_url": file_url,
             "file_name": file_name,
-            "reply_to_id": reply_to_id
+            "reply_to_id": reply_to_id,
+            "reply_preview": reply_preview,
+            "reply_preview_sender": reply_preview_sender
         }, room=online_users[recipient])
     
     # Send plaintext back to sender for their own UI
     sender_sid = online_users.get(sender)
     if sender_sid:
+        # include reply preview for sender as well
+        reply_preview = None
+        reply_preview_sender = None
+        if reply_to_id:
+            try:
+                ref = Message.query.get(reply_to_id)
+                if ref:
+                    reply_preview = xor_decrypt(ref.encrypted_message, get_shared_key(ref.sender, ref.recipient))
+                    reply_preview_sender = ref.sender
+            except Exception:
+                reply_preview = None
+
         emit("receive_message", {
             "id": message_id,
             "sender": sender, 
@@ -791,8 +821,40 @@ def handle_send_message(data):
             "message_type": message_type,
             "file_url": file_url,
             "file_name": file_name,
-            "reply_to_id": reply_to_id
+            "reply_to_id": reply_to_id,
+            "reply_preview": reply_preview,
+            "reply_preview_sender": reply_preview_sender
         }, room=sender_sid)
+
+
+@socketio.on('fetch_message_by_id')
+def handle_fetch_message_by_id(data):
+    message_id = data.get('message_id')
+    sid = request.sid
+    if not message_id:
+        emit('fetched_message', {'message_id': None, 'error': 'missing id'}, room=sid)
+        return
+    try:
+        with app.app_context():
+            msg = Message.query.get(int(message_id))
+            if not msg:
+                emit('fetched_message', {'message_id': message_id, 'error': 'not found'}, room=sid)
+                return
+            # Derive a shared key — for group messages recipient may be None, fall back to sender
+            other = msg.recipient or msg.sender
+            try:
+                key = get_shared_key(msg.sender, other)
+                plaintext = xor_decrypt(msg.encrypted_message, key)
+            except Exception as e:
+                plaintext = '[Decryption Error]'
+            emit('fetched_message', {
+                'message_id': message_id,
+                'message': plaintext,
+                'sender': msg.sender,
+                'timestamp': msg.timestamp.isoformat()
+            }, room=sid)
+    except Exception as e:
+        emit('fetched_message', {'message_id': message_id, 'error': str(e)}, room=sid)
 
 
 @socketio.on("message_delivered")
@@ -1216,10 +1278,22 @@ def handle_get_history(data):
                 "file_url": msg.file_url,
                 "file_name": msg.file_name,
                 "reply_to_id": msg.reply_to_id,
+                "reply_preview": None,
+                "reply_preview_sender": None,
                 "pinned": msg.pinned or False,
                 "starred": msg.starred or False,
                 "reactions": reactions_list
             })
+            # If this message replies to another, attempt to include a small preview
+            if msg.reply_to_id:
+                try:
+                    ref = Message.query.get(msg.reply_to_id)
+                    if ref:
+                        preview_text = xor_decrypt(ref.encrypted_message, get_shared_key(ref.sender, ref.recipient))
+                        history[-1]["reply_preview"] = preview_text
+                        history[-1]["reply_preview_sender"] = ref.sender
+                except Exception:
+                    pass
         except Exception as e:
             print(f"Error decrypting message {msg.id}: {e}")
             history.append({
@@ -1700,6 +1774,21 @@ def handle_send_group_message(data):
                 "reactions": []
             }
             
+            # include reply preview when replying to a group message
+            reply_preview = None
+            reply_preview_sender = None
+            if data.get('reply_to_id'):
+                try:
+                    ref = Message.query.get(int(data.get('reply_to_id')))
+                    if ref:
+                        reply_preview = xor_decrypt(ref.encrypted_message, get_shared_key('group', group_name))
+                        reply_preview_sender = ref.sender
+                except Exception:
+                    reply_preview = None
+            if reply_preview:
+                msg_data['reply_to_id'] = data.get('reply_to_id')
+                msg_data['reply_preview'] = reply_preview
+                msg_data['reply_preview_sender'] = reply_preview_sender
             # Send to all group members who are online
             for member in group.members:
                 if member.username in online_users:
