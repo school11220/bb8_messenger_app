@@ -699,17 +699,17 @@
 
         .message-bubble {
             display: inline-block; /* size to content */
-            padding: 6px 10px; /* compact bubble */
-            border-radius: 12px; /* tighter radius */
+            padding: 4px 8px; /* smaller bubble for denser view */
+            border-radius: 10px; /* slightly smaller radius */
             max-width: 66%; /* cap width while allowing variable lengths */
-            box-shadow: 0 1px 3px rgba(0,0,0,0.18);
-            line-height: 1.28;
+            box-shadow: none; /* flatter look */
+            line-height: 1.22;
             word-wrap: break-word;
             position: relative;
-            font-size: 12px; /* smaller for denser messages */
+            font-size: 11px; /* smaller text */
             color: var(--text-primary);
             vertical-align: middle;
-            gap: 4px;
+            gap: 3px;
         }
 
         /* Bubble tails */

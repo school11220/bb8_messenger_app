@@ -776,15 +776,14 @@ function appendMessage(sender, message, data = {}) {
     bubble.appendChild(msgContent);
     
     // Meta info
+    // message-meta intentionally omitted (timestamp removed for now)
     const meta = document.createElement("div");
     meta.className = "message-meta";
-    if (data.timestamp) {
-        meta.textContent = formatTime(data.timestamp);
-    }
+    // keep edited flag visible without timestamp
     if (data.edited) {
-        meta.textContent += ' • edited';
+        meta.textContent = 'edited';
+        bubble.appendChild(meta);
     }
-    bubble.appendChild(meta);
     
     // Reactions
     if (data.reactions && data.reactions.length > 0) {
@@ -1958,24 +1957,31 @@ function rejectCall(callId) {
     hideCallUI();
 }
 
-function endCall() {
-    if (currentCall) {
+function endCall(suppressEmit = false) {
+    // suppressEmit: when true, do not emit end notifications (prevents loops when handling remote end)
+    if (!suppressEmit && currentCall) {
+        // emit both names to increase compatibility with server handlers
         socket.emit('end_call', {
             call_id: currentCall.call_id,
             user: username
         });
+        socket.emit('call_ended', {
+            call_id: currentCall.call_id,
+            user: username,
+            duration: currentCall && currentCall.duration ? currentCall.duration : 0
+        });
     }
-    
+
     if (peerConnection) {
-        peerConnection.close();
+        try { peerConnection.close(); } catch (e) {}
         peerConnection = null;
     }
-    
+
     if (localStream) {
-        localStream.getTracks().forEach(track => track.stop());
+        try { localStream.getTracks().forEach(track => track.stop()); } catch (e) {}
         localStream = null;
     }
-    
+
     hideCallUI();
     currentCall = null;
 }
@@ -2131,8 +2137,15 @@ socket.on('call_rejected', data => {
 });
 
 socket.on('call_ended', data => {
-    showNotification(`Call ended. Duration: ${data.duration}s`);
-    endCall();
+    showNotification(`Call ended. Duration: ${data.duration || 0}s`);
+    // End locally without re-emitting
+    endCall(true);
+});
+
+// Some servers/clients may emit 'end_call' directly; listen for it too
+socket.on('end_call', data => {
+    showNotification(`Call ended by ${data.user || 'peer'}`);
+    endCall(true);
 });
 
 socket.on('ice_candidate', async data => {
