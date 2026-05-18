@@ -3,8 +3,9 @@ import threading
 import requests
 import socketio
 import random
+import os
 
-BASE = 'http://localhost:5000'
+BASE = os.environ.get('BASE_URL', 'http://localhost:5000')
 
 sio_clients = {}
 
@@ -13,7 +14,7 @@ def http_register(username, password='test123'):
     r = requests.post(BASE + '/register', json={'username': username, 'password': password})
     print('register', username, r.status_code, r.text)
 
-class TestClient:
+class EavesdropClient:
     def __init__(self, name):
         self.name = name
         self.sio = socketio.Client()
@@ -132,9 +133,9 @@ def run_test():
     http_register(eve_name)
 
     # create clients
-    alice = TestClient(alice_name)
-    bob = TestClient(bob_name)
-    eve = TestClient(eve_name)
+    alice = EavesdropClient(alice_name)
+    bob = EavesdropClient(bob_name)
+    eve = EavesdropClient(eve_name)
 
     # connect all (sequentially to avoid polling timeouts)
     alice.connect()
@@ -150,7 +151,7 @@ def run_test():
     time.sleep(1)
 
     # Alice initiates BB84 to Bob
-    alice.start_initiator('bob', N=128, sampleSize=32)
+    alice.start_initiator(bob_name, N=128, sampleSize=32)
 
     # let events flow
     time.sleep(5)

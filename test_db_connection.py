@@ -1,69 +1,94 @@
 #!/usr/bin/env python3
 """
-Quick database connection tester for Render PostgreSQL
-Run this locally to verify your database credentials work
+Database connection tester.
+
+This file is intentionally safe to import so pytest collection does not try to
+connect to a deployment-only database. Run it directly to test the configured DB:
+
+    python test_db_connection.py
 """
 
 import os
 import sys
 
-# Your Render database URL
-DATABASE_URL = "postgresql://bb84_chat_db_user:ANJp2szOmn3balbo0ndvwa51CbMA5vna@dpg-d4erovuuk2gs739nq80g-a/bb84_chat_db"
+from sqlalchemy.engine import make_url
 
-print("🔍 Testing Render PostgreSQL Connection...")
-print(f"📡 Database: {DATABASE_URL.split('@')[1].split('/')[1]}")
-print(f"🌐 Host: {DATABASE_URL.split('@')[1].split('/')[0]}")
-print()
+__test__ = False
 
-try:
-    from sqlalchemy import create_engine, text
-    
-    # Convert postgres:// to postgresql:// if needed
-    if DATABASE_URL.startswith('postgres://'):
-        DATABASE_URL = DATABASE_URL.replace('postgres://', 'postgresql://', 1)
-    
-    # Create engine
-    engine = create_engine(DATABASE_URL)
-    
-    # Test connection
-    with engine.connect() as connection:
-        result = connection.execute(text("SELECT version()"))
-        version = result.fetchone()[0]
-        print("✅ Connection Successful!")
-        print(f"📊 PostgreSQL Version: {version[:50]}...")
-        print()
-        
-        # Check if tables exist
-        result = connection.execute(text("""
-            SELECT table_name 
-            FROM information_schema.tables 
-            WHERE table_schema = 'public'
-        """))
-        tables = [row[0] for row in result]
-        
-        if tables:
-            print(f"📋 Existing Tables: {', '.join(tables)}")
-        else:
-            print("📋 No tables found (will be created on first app run)")
-        
-        print()
-        print("🎉 Database is ready to use!")
-        print()
-        print("Next steps:")
-        print("1. Push your code to GitHub")
-        print("2. Deploy on Render")
-        print("3. Add DATABASE_URL environment variable in Render dashboard")
-        
-except ImportError:
-    print("❌ SQLAlchemy not installed")
-    print("Run: pip install sqlalchemy psycopg2-binary")
-    sys.exit(1)
-    
-except Exception as e:
-    print(f"❌ Connection Failed: {str(e)}")
+
+def find_database_url():
+    for key in (
+        "DATABASE_URL",
+        "RAILWAY_DATABASE_URL",
+        "POSTGRES_URL",
+        "POSTGRESQL_URL",
+        "PG_URI",
+        "SQLALCHEMY_DATABASE_URI",
+        "DB_URL",
+    ):
+        value = os.environ.get(key)
+        if value and value.strip():
+            return key, value.strip()
+    return "local sqlite fallback", "sqlite:///chat.db"
+
+
+def normalize_database_url(database_url):
+    if database_url.startswith("postgres://"):
+        return database_url.replace("postgres://", "postgresql://", 1)
+    return database_url
+
+
+def main():
+    env_name, database_url = find_database_url()
+    database_url = normalize_database_url(database_url)
+    parsed = make_url(database_url)
+
+    print("Testing database connection...")
+    print(f"Source: {env_name}")
+    print(f"Database: {parsed.database or '(default)'}")
+    print(f"Host: {parsed.host or '(local file)'}")
     print()
-    print("Common issues:")
-    print("1. Check if database URL is correct")
-    print("2. Verify database is running in Render dashboard")
-    print("3. Make sure you're using Internal Database URL, not External")
-    sys.exit(1)
+
+    try:
+        from sqlalchemy import create_engine, text
+
+        engine = create_engine(database_url)
+        with engine.connect() as connection:
+            if parsed.drivername.startswith("sqlite"):
+                result = connection.execute(text("SELECT sqlite_version()"))
+                version = f"SQLite {result.fetchone()[0]}"
+            else:
+                result = connection.execute(text("SELECT version()"))
+                version = result.fetchone()[0]
+
+            print("Connection successful.")
+            print(f"Database version: {version[:80]}")
+
+            if not parsed.drivername.startswith("sqlite"):
+                result = connection.execute(
+                    text(
+                        """
+                        SELECT table_name
+                        FROM information_schema.tables
+                        WHERE table_schema = 'public'
+                        ORDER BY table_name
+                        """
+                    )
+                )
+                tables = [row[0] for row in result]
+                print(f"Existing tables: {', '.join(tables) if tables else 'none'}")
+
+        return 0
+    except ImportError:
+        print("SQLAlchemy is not installed.")
+        print("Run: pip install -r requirements.txt")
+        return 1
+    except Exception as exc:
+        print(f"Connection failed: {exc}")
+        print()
+        print("For Render internal database URLs, run this inside Render or use an external URL locally.")
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -19,11 +19,11 @@ from flask import Flask, request, jsonify, send_from_directory, session
 from flask_socketio import SocketIO, emit
 from threading import Lock
 from flask_sqlalchemy import SQLAlchemy
-from sqlalchemy import text
+from sqlalchemy import and_, or_, text
 import logging
 from logging.handlers import RotatingFileHandler
 import base64
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
 import mimetypes
@@ -125,6 +125,10 @@ socketio = SocketIO(app,
                     transports=['polling', 'websocket'])
 
 # ------------------ Database Models ------------------
+def utcnow():
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
 group_members = db.Table('group_members',
     db.Column('user_id', db.Integer, db.ForeignKey('user.id'), primary_key=True),
     db.Column('group_id', db.Integer, db.ForeignKey('group.id'), primary_key=True)
@@ -146,10 +150,10 @@ class User(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(100), unique=True, nullable=False)
     password_hash = db.Column(db.String(200), nullable=False)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=utcnow)
     status = db.Column(db.String(50), default='online') # online, away, busy, offline
     status_message = db.Column(db.String(200), nullable=True)
-    last_seen = db.Column(db.DateTime, default=datetime.utcnow)
+    last_seen = db.Column(db.DateTime, default=utcnow)
     avatar_url = db.Column(db.String(500), nullable=True)
     show_last_seen = db.Column(db.Boolean, default=True)
     show_read_receipts = db.Column(db.Boolean, default=True)
@@ -164,7 +168,7 @@ class Message(db.Model):
     recipient = db.Column(db.String(100), nullable=True) # Can be null for group messages
     group_id = db.Column(db.Integer, db.ForeignKey('group.id'), nullable=True)
     encrypted_message = db.Column(db.Text, nullable=False)
-    timestamp = db.Column(db.DateTime, default=datetime.utcnow)
+    timestamp = db.Column(db.DateTime, default=utcnow)
     status = db.Column(db.String(20), nullable=False, default='sent') # sent, delivered, read
     read = db.Column(db.Boolean, default=False)
     edited = db.Column(db.Boolean, default=False)
@@ -185,7 +189,7 @@ class MessageReaction(db.Model):
     message_id = db.Column(db.Integer, db.ForeignKey('message.id'), nullable=False)
     user = db.Column(db.String(100), nullable=False)
     emoji = db.Column(db.String(10), nullable=False)
-    timestamp = db.Column(db.DateTime, default=datetime.utcnow)
+    timestamp = db.Column(db.DateTime, default=utcnow)
 
     def __repr__(self):
         return f'<Reaction {self.emoji} by {self.user} on message {self.message_id}>'
@@ -196,7 +200,7 @@ class Call(db.Model):
     callee = db.Column(db.String(100), nullable=False)
     call_type = db.Column(db.String(20), nullable=False)
     status = db.Column(db.String(20), default='calling')
-    started_at = db.Column(db.DateTime, default=datetime.utcnow)
+    started_at = db.Column(db.DateTime, default=utcnow)
     ended_at = db.Column(db.DateTime, nullable=True)
     duration = db.Column(db.Integer, nullable=True)
     offer = db.Column(db.Text, nullable=True)
@@ -214,7 +218,7 @@ class GroupAdmin(db.Model):
     can_remove_members = db.Column(db.Boolean, default=True)
     can_edit_group = db.Column(db.Boolean, default=True)
     can_send_messages = db.Column(db.Boolean, default=True)
-    appointed_at = db.Column(db.DateTime, default=datetime.utcnow)
+    appointed_at = db.Column(db.DateTime, default=utcnow)
 
     def __repr__(self):
         return f'<GroupAdmin group={self.group_id} user={self.user_id}>'
@@ -226,9 +230,9 @@ class DeviceSession(db.Model):
     device_name = db.Column(db.String(100), nullable=True)
     device_type = db.Column(db.String(50), nullable=True)  # web, mobile, desktop
     ip_address = db.Column(db.String(50), nullable=True)
-    last_active = db.Column(db.DateTime, default=datetime.utcnow)
+    last_active = db.Column(db.DateTime, default=utcnow)
     is_active = db.Column(db.Boolean, default=True)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=utcnow)
 
     def __repr__(self):
         return f'<DeviceSession {self.device_name} for user {self.user_id}>'
@@ -240,7 +244,7 @@ class GroupInvitation(db.Model):
     invited_user = db.Column(db.String(100), nullable=False)
     invite_token = db.Column(db.String(100), unique=True, nullable=False)
     status = db.Column(db.String(20), default='pending')  # pending, accepted, rejected, expired
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=utcnow)
     expires_at = db.Column(db.DateTime, nullable=True)
 
     def __repr__(self):
@@ -330,12 +334,119 @@ lock = Lock()
 eavesdrop_targets = {}
 
 def get_shared_key(user1, user2):
+    import hashlib
+
     pair = tuple(sorted((user1, user2)))
     with lock:
         if pair not in shared_keys:
-            shared_keys[pair] = bb84_protocol(n=32)
+            seed = f"{app.config['SECRET_KEY']}:{pair[0]}:{pair[1]}".encode("utf-8")
+            digest = hashlib.sha256(seed).hexdigest()
+            shared_keys[pair] = bin(int(digest, 16))[2:].zfill(256)[:32]
             print(f"🔑 New key for {pair}: {shared_keys[pair]}")
         return shared_keys[pair]
+
+
+def _coerce_username(value):
+    """Accept legacy string payloads and newer object payloads."""
+    if isinstance(value, dict):
+        value = value.get('username')
+    if value is None:
+        return None
+    value = str(value).strip()
+    return value or None
+
+
+def _username_for_sid(sid):
+    for online_username, online_sid in online_users.items():
+        if online_sid == sid:
+            return online_username
+    return None
+
+
+def _current_socket_username(data=None):
+    data = data or {}
+    return (
+        _coerce_username(data.get('editor')) or
+        _coerce_username(data.get('deleter')) or
+        _coerce_username(data.get('user')) or
+        _coerce_username(data.get('username')) or
+        session.get('username') or
+        _username_for_sid(getattr(request, 'sid', None))
+    )
+
+
+def _group_payload(group):
+    creator = db.session.get(User, group.creator_id)
+    return {
+        "id": group.id,
+        "name": group.name,
+        "creator": creator.username if creator else None,
+        "members": [member.username for member in group.members],
+        "member_count": len(group.members)
+    }
+
+
+def _emit_groups_for_user(username):
+    user = User.query.filter_by(username=username).first()
+    sid = online_users.get(username)
+    if user and sid:
+        socketio.emit("user_groups", {"groups": [_group_payload(group) for group in user.groups]}, room=sid)
+
+
+def _message_group(msg):
+    if msg.group_id:
+        return db.session.get(Group, msg.group_id)
+    if msg.recipient:
+        return Group.query.filter_by(name=msg.recipient).first()
+    return None
+
+
+def _message_key(msg):
+    group = _message_group(msg)
+    if group:
+        return get_shared_key("group", f"id:{group.id}")
+    return get_shared_key(msg.sender, msg.recipient)
+
+
+def _message_participants(msg):
+    group = _message_group(msg)
+    if group:
+        return [member.username for member in group.members]
+    return [name for name in (msg.sender, msg.recipient) if name]
+
+
+def _deleted_for_users(msg):
+    if not msg.deleted_for:
+        return set()
+    try:
+        deleted = json.loads(msg.deleted_for)
+        if isinstance(deleted, list):
+            return set(str(user) for user in deleted)
+    except (TypeError, ValueError):
+        pass
+    return set()
+
+
+def _message_visible_to(msg, username):
+    return username not in _deleted_for_users(msg)
+
+
+def _chat_id_for_viewer(msg, viewer):
+    group = _message_group(msg)
+    if group:
+        return group.name
+    if viewer == msg.sender:
+        return msg.recipient
+    return msg.sender
+
+
+def _emit_to_message_participants(msg, event, payload):
+    for participant in set(_message_participants(msg)):
+        sid = online_users.get(participant)
+        if sid:
+            participant_payload = dict(payload)
+            participant_payload.setdefault("chat_id", _chat_id_for_viewer(msg, participant))
+            socketio.emit(event, participant_payload, room=sid)
 
 # ------------------ Routes ------------------
 @app.route("/")
@@ -511,7 +622,14 @@ def upload_file():
         
         # Get file type
         mime_type = mimetypes.guess_type(filepath)[0] or 'application/octet-stream'
-        file_type = 'image' if mime_type.startswith('image') else 'voice' if mime_type.startswith('audio') else 'file'
+        extension = filename.rsplit('.', 1)[1].lower() if '.' in filename else ''
+        original_name = file.filename.lower()
+        if mime_type.startswith('image'):
+            file_type = 'image'
+        elif mime_type.startswith('audio') or extension in {'mp3', 'wav', 'ogg'} or (extension == 'webm' and original_name.startswith('voice_')):
+            file_type = 'voice'
+        else:
+            file_type = 'file'
         
         return jsonify({
             "success": True, 
@@ -563,6 +681,7 @@ def handle_disconnect():
 
 @socketio.on("register_user")
 def handle_register_user(username):
+    username = _coerce_username(username)
     if not username:
         return
 
@@ -771,7 +890,7 @@ def handle_send_message(data):
             try:
                 ref = Message.query.get(reply_to_id)
                 if ref:
-                    reply_preview = xor_decrypt(ref.encrypted_message, get_shared_key(ref.sender, ref.recipient))
+                    reply_preview = "This message was deleted" if ref.deleted else xor_decrypt(ref.encrypted_message, _message_key(ref))
                     reply_preview_sender = ref.sender
             except Exception:
                 reply_preview = None
@@ -806,7 +925,7 @@ def handle_send_message(data):
             try:
                 ref = Message.query.get(reply_to_id)
                 if ref:
-                    reply_preview = xor_decrypt(ref.encrypted_message, get_shared_key(ref.sender, ref.recipient))
+                    reply_preview = "This message was deleted" if ref.deleted else xor_decrypt(ref.encrypted_message, _message_key(ref))
                     reply_preview_sender = ref.sender
             except Exception:
                 reply_preview = None
@@ -840,11 +959,8 @@ def handle_fetch_message_by_id(data):
             if not msg:
                 emit('fetched_message', {'message_id': message_id, 'error': 'not found'}, room=sid)
                 return
-            # Derive a shared key — for group messages recipient may be None, fall back to sender
-            other = msg.recipient or msg.sender
             try:
-                key = get_shared_key(msg.sender, other)
-                plaintext = xor_decrypt(msg.encrypted_message, key)
+                plaintext = "This message was deleted" if msg.deleted else xor_decrypt(msg.encrypted_message, _message_key(msg))
             except Exception as e:
                 plaintext = '[Decryption Error]'
             emit('fetched_message', {
@@ -879,65 +995,6 @@ def handle_message_delivered(data):
                 logger.info(f"message_delivered id={msg.id} sender={msg.sender} recipient={msg.recipient} status=delivered")
             except Exception:
                 pass
-
-
-@socketio.on("edit_message")
-def handle_edit_message(data):
-    message_id = data.get("message_id")
-    username = data.get("username")
-    new_message = data.get("new_message")
-    
-    with app.app_context():
-        msg = Message.query.get(message_id)
-        # Check if the message exists, the user is the sender, and it's within 5 minutes
-        if msg and msg.sender == username and (datetime.utcnow() - msg.timestamp) < timedelta(minutes=5):
-            key = get_shared_key(msg.sender, msg.recipient)
-            msg.encrypted_message = xor_encrypt_decrypt(new_message, key)
-            msg.edited = True
-            db.session.commit()
-
-            # Notify both sender and recipient with plaintext
-            sender_sid = online_users.get(msg.sender)
-            if sender_sid:
-                emit("message_edited", {
-                    "id": msg.id, "new_message": new_message, "edited": True
-                }, room=sender_sid)
-            
-            recipient_sid = online_users.get(msg.recipient)
-            if recipient_sid:
-                emit("message_edited", {
-                    "id": msg.id, "new_message": new_message, "edited": True
-                }, room=recipient_sid)
-            try:
-                logger.info(f"message_edited id={msg.id} sender={msg.sender} editor={username}")
-            except Exception:
-                pass
-
-
-@socketio.on("delete_message")
-def handle_delete_message(data):
-    message_id = data.get("message_id")
-    username = data.get("username")
-    with app.app_context():
-        msg = Message.query.get(message_id)
-        if msg and msg.sender == username:
-            recipient = msg.recipient
-            # Log deletion and then delete
-            try:
-                logger.info(f"message_deleted id={msg.id} sender={msg.sender} deleter={username} recipient={recipient}")
-            except Exception:
-                pass
-            db.session.delete(msg)
-            db.session.commit()
-            
-            # Notify both sender and recipient that the message was deleted
-            sender_sid = online_users.get(username)
-            if sender_sid:
-                emit("message_deleted", {"id": message_id}, room=sender_sid)
-            recipient_sid = online_users.get(recipient)
-            if recipient_sid:
-                emit("message_deleted", {"id": message_id}, room=recipient_sid)
-
 
 @socketio.on("mark_as_read")
 def handle_mark_as_read(data):
@@ -1028,23 +1085,11 @@ def handle_add_reaction(data):
             # Get the message to notify both users
             msg = Message.query.get(message_id)
             if msg:
-                # Notify sender
-                sender_sid = online_users.get(msg.sender)
-                if sender_sid:
-                    emit("reaction_added", {
-                        "message_id": message_id, 
-                        "user": user, 
-                        "emoji": emoji
-                    }, room=sender_sid)
-                
-                # Notify recipient
-                recipient_sid = online_users.get(msg.recipient)
-                if recipient_sid:
-                    emit("reaction_added", {
-                        "message_id": message_id, 
-                        "user": user, 
-                        "emoji": emoji
-                    }, room=recipient_sid)
+                _emit_to_message_participants(msg, "reaction_added", {
+                    "message_id": message_id,
+                    "user": user,
+                    "emoji": emoji
+                })
 
 
 @socketio.on("remove_reaction")
@@ -1065,46 +1110,11 @@ def handle_remove_reaction(data):
             # Get the message to notify both users
             msg = Message.query.get(message_id)
             if msg:
-                # Notify sender
-                sender_sid = online_users.get(msg.sender)
-                if sender_sid:
-                    emit("reaction_removed", {
-                        "message_id": message_id, 
-                        "user": user, 
-                        "emoji": emoji
-                    }, room=sender_sid)
-                
-                # Notify recipient
-                recipient_sid = online_users.get(msg.recipient)
-                if recipient_sid:
-                    emit("reaction_removed", {
-                        "message_id": message_id, 
-                        "user": user, 
-                        "emoji": emoji
-                    }, room=recipient_sid)
-
-
-# Message Organization
-@socketio.on("pin_message")
-def handle_pin_message(data):
-    message_id = data.get("message_id")
-    user = data.get("user")
-    
-    with app.app_context():
-        msg = Message.query.get(message_id)
-        if msg and (msg.sender == user or msg.recipient == user):
-            msg.pinned = not msg.pinned
-            db.session.commit()
-            
-            # Notify both users
-            for recipient in [msg.sender, msg.recipient]:
-                sid = online_users.get(recipient)
-                if sid:
-                    emit("message_pinned", {
-                        "message_id": message_id, 
-                        "pinned": msg.pinned
-                    }, room=sid)
-
+                _emit_to_message_participants(msg, "reaction_removed", {
+                    "message_id": message_id,
+                    "user": user,
+                    "emoji": emoji
+                })
 
 @socketio.on("star_message")
 def handle_star_message(data):
@@ -1171,7 +1181,7 @@ def handle_update_status(data):
         if user:
             user.status = status
             user.status_message = status_message
-            user.last_seen = datetime.utcnow()
+            user.last_seen = utcnow()
             db.session.commit()
             
             # Broadcast status to all online users
@@ -1255,8 +1265,10 @@ def handle_get_history(data):
 
     history = []
     for msg in messages:
+        if not _message_visible_to(msg, user1):
+            continue
         try:
-            decrypted_text = xor_decrypt(msg.encrypted_message, key)
+            decrypted_text = "This message was deleted" if msg.deleted else xor_decrypt(msg.encrypted_message, key)
             # Log decryption attempt (don't log key)
             try:
                 logger.info(f"decrypt_message id={msg.id} sender={msg.sender} recipient={msg.recipient} success=True")
@@ -1282,6 +1294,7 @@ def handle_get_history(data):
                 "reply_preview_sender": None,
                 "pinned": msg.pinned or False,
                 "starred": msg.starred or False,
+                "deleted": msg.deleted or False,
                 "reactions": reactions_list
             })
             # If this message replies to another, attempt to include a small preview
@@ -1289,7 +1302,7 @@ def handle_get_history(data):
                 try:
                     ref = Message.query.get(msg.reply_to_id)
                     if ref:
-                        preview_text = xor_decrypt(ref.encrypted_message, get_shared_key(ref.sender, ref.recipient))
+                        preview_text = "This message was deleted" if ref.deleted else xor_decrypt(ref.encrypted_message, _message_key(ref))
                         history[-1]["reply_preview"] = preview_text
                         history[-1]["reply_preview_sender"] = ref.sender
                 except Exception:
@@ -1611,45 +1624,58 @@ def handle_create_group(data):
         if not name or not creator:
             emit("error", {"message": "Group name and creator required"})
             return
+        name = str(name).strip()
+        creator = _coerce_username(creator)
+        member_names = []
+        for member in members:
+            member_name = _coerce_username(member)
+            if member_name and member_name not in member_names:
+                member_names.append(member_name)
+        if creator not in member_names:
+            member_names.append(creator)
         
         # Check if group already exists
         existing = Group.query.filter_by(name=name).first()
         if existing:
             emit("error", {"message": "Group name already exists"})
             return
+
+        creator_user = User.query.filter_by(username=creator).first()
+        if not creator_user:
+            emit("error", {"message": "Creator user not found"})
+            return
         
         # Create group
-        group = Group(name=name, creator_id=creator)
+        group = Group(name=name, creator_id=creator_user.id)
         db.session.add(group)
         db.session.commit()
         
         # Add members
-        for member_name in members:
+        for member_name in member_names:
             user = User.query.filter_by(username=member_name).first()
-            if user:
+            if user and user not in group.members:
                 group.members.append(user)
+
+        if creator_user not in group.members:
+            group.members.append(creator_user)
+
+        existing_admin = GroupAdmin.query.filter_by(group_id=group.id, user_id=creator_user.id).first()
+        if not existing_admin:
+            db.session.add(GroupAdmin(group_id=group.id, user_id=creator_user.id, role='super_admin'))
         
         db.session.commit()
         
-        print(f"Group created: {name} by {creator} with {len(members)} members")
+        print(f"Group created: {name} by {creator} with {len(group.members)} members")
         
         # Notify all members to refresh their groups
-        for member in members:
-            user_sid = online_users.get(member)
-            if user_sid:
-                # Get fresh groups list for this member
-                member_user = User.query.filter_by(username=member).first()
-                if member_user:
-                    member_groups = [{"name": g.name, "member_count": len(g.members)} 
-                                    for g in member_user.groups]
-                    socketio.emit("user_groups", {"groups": member_groups}, room=user_sid)
-                    print(f"Sent groups update to {member}: {member_groups}")
+        for member in group.members:
+            _emit_groups_for_user(member.username)
         
         # Notify creator specifically
         emit("group_created", {
             "id": group.id,
             "name": group.name,
-            "members": members
+            "members": [member.username for member in group.members]
         })
         
     except Exception as e:
@@ -1662,15 +1688,14 @@ def handle_create_group(data):
 def handle_get_user_groups(data):
     """Get all groups a user is part of"""
     try:
-        username = data.get('username')
+        username = _coerce_username(data.get('username'))
         if not username:
             return
         
         with app.app_context():
             user = User.query.filter_by(username=username).first()
             if user:
-                groups = [{"name": g.name, "member_count": len(g.members)} 
-                         for g in user.groups]
+                groups = [_group_payload(group) for group in user.groups]
                 print(f"User {username} groups: {groups}")
                 emit("user_groups", {"groups": groups})
     except Exception as e:
@@ -1692,18 +1717,25 @@ def handle_get_group_history(data):
             group = Group.query.filter_by(name=group_name).first()
             if not group:
                 return
+            if username:
+                user = User.query.filter_by(username=username).first()
+                if not user or user not in group.members:
+                    emit("error", {"message": "You are not a member of this group"})
+                    return
             
-            # Get messages where recipient is the group name (we store group messages with recipient=group_name)
+            # Include older group messages stored only by recipient name and newer rows with group_id.
             messages = db.session.query(Message).filter(
-                Message.recipient == group_name
+                or_(Message.group_id == group.id, Message.recipient == group_name)
             ).order_by(Message.timestamp.asc()).all()
             
             history = []
             for msg in messages:
+                if username and not _message_visible_to(msg, username):
+                    continue
                 try:
-                    # For group messages, decrypt with a simple shared key based on group name
-                    key = get_shared_key("group", group_name)
-                    decrypted_text = xor_decrypt(msg.encrypted_message, key)
+                    # Use the message's stored group identity so renamed groups keep history readable.
+                    key = _message_key(msg)
+                    decrypted_text = "This message was deleted" if msg.deleted else xor_decrypt(msg.encrypted_message, key)
                     
                     reactions = MessageReaction.query.filter_by(message_id=msg.id).all()
                     reactions_list = [{"user": r.user, "emoji": r.emoji} for r in reactions]
@@ -1714,11 +1746,26 @@ def handle_get_group_history(data):
                         "message": decrypted_text,
                         "timestamp": msg.timestamp.isoformat(),
                         "status": msg.status,
+                        "edited": msg.edited,
+                        "group_id": group.id,
                         "message_type": msg.message_type or "text",
                         "file_url": msg.file_url,
                         "file_name": msg.file_name,
+                        "reply_to_id": msg.reply_to_id,
+                        "reply_preview": None,
+                        "reply_preview_sender": None,
+                        "pinned": msg.pinned or False,
+                        "deleted": msg.deleted or False,
                         "reactions": reactions_list
                     })
+                    if msg.reply_to_id:
+                        try:
+                            ref = Message.query.get(msg.reply_to_id)
+                            if ref:
+                                history[-1]["reply_preview"] = "This message was deleted" if ref.deleted else xor_decrypt(ref.encrypted_message, _message_key(ref))
+                                history[-1]["reply_preview_sender"] = ref.sender
+                        except Exception:
+                            pass
                 except Exception as e:
                     print(f"Error decrypting group message {msg.id}: {e}")
             
@@ -1736,6 +1783,7 @@ def handle_send_group_message(data):
         message_type = data.get('message_type', 'text')
         file_url = data.get('file_url')
         file_name = data.get('file_name')
+        reply_to_id = data.get('reply_to_id')
         
         if not sender or not group_name or not message:
             return
@@ -1744,20 +1792,26 @@ def handle_send_group_message(data):
             group = Group.query.filter_by(name=group_name).first()
             if not group:
                 return
+            sender_user = User.query.filter_by(username=sender).first()
+            if not sender_user or sender_user not in group.members:
+                emit("error", {"message": "You are not a member of this group"})
+                return
             
-            # Encrypt message with group key
-            key = get_shared_key("group", group_name)
+            # Encrypt message with a stable group key.
+            key = get_shared_key("group", f"id:{group.id}")
             encrypted = xor_encrypt_decrypt(message, key)
             
             # Store message with recipient as group name
             msg = Message(
                 sender=sender,
                 recipient=group_name,
+                group_id=group.id,
                 encrypted_message=encrypted,
                 status='delivered',
                 message_type=message_type,
                 file_url=file_url,
-                file_name=file_name
+                file_name=file_name,
+                reply_to_id=reply_to_id
             )
             db.session.add(msg)
             db.session.commit()
@@ -1766,11 +1820,16 @@ def handle_send_group_message(data):
                 "id": msg.id,
                 "sender": sender,
                 "group_name": group_name,
+                "group_id": group.id,
                 "message": message,
                 "timestamp": msg.timestamp.isoformat(),
+                "status": msg.status,
                 "message_type": message_type,
                 "file_url": file_url,
                 "file_name": file_name,
+                "reply_to_id": reply_to_id,
+                "reply_preview": None,
+                "reply_preview_sender": None,
                 "reactions": []
             }
             
@@ -1781,14 +1840,12 @@ def handle_send_group_message(data):
                 try:
                     ref = Message.query.get(int(data.get('reply_to_id')))
                     if ref:
-                        reply_preview = xor_decrypt(ref.encrypted_message, get_shared_key('group', group_name))
+                        reply_preview = "This message was deleted" if ref.deleted else xor_decrypt(ref.encrypted_message, _message_key(ref))
                         reply_preview_sender = ref.sender
                 except Exception:
                     reply_preview = None
-            if reply_preview:
-                msg_data['reply_to_id'] = data.get('reply_to_id')
-                msg_data['reply_preview'] = reply_preview
-                msg_data['reply_preview_sender'] = reply_preview_sender
+            msg_data['reply_preview'] = reply_preview
+            msg_data['reply_preview_sender'] = reply_preview_sender
             # Send to all group members who are online
             for member in group.members:
                 if member.username in online_users:
@@ -1805,8 +1862,8 @@ def handle_edit_message(data):
     """Edit an existing message"""
     try:
         message_id = data.get('message_id')
-        new_text = data.get('new_text')
-        editor = data.get('editor')
+        new_text = data.get('new_text') or data.get('new_message')
+        editor = _current_socket_username(data)
         
         if not message_id or not new_text or not editor:
             return
@@ -1817,28 +1874,19 @@ def handle_edit_message(data):
                 emit("error", {"message": "Cannot edit this message"})
                 return
             
-            # Re-encrypt with existing key
-            if msg.recipient:
-                key = get_shared_key(msg.sender, msg.recipient)
-            else:
-                key = get_shared_key("group", msg.recipient or "")
-            
-            msg.encrypted_message = xor_encrypt_decrypt(new_text, key)
+            msg.encrypted_message = xor_encrypt_decrypt(new_text, _message_key(msg))
             msg.edited = True
             db.session.commit()
             
             edit_data = {
+                "id": message_id,
                 "message_id": message_id,
+                "new_message": new_text,
                 "new_text": new_text,
                 "edited": True
             }
             
-            # Notify both users
-            if msg.recipient and msg.recipient != msg.sender:
-                if msg.sender in online_users:
-                    socketio.emit("message_edited", edit_data, room=online_users[msg.sender])
-                if msg.recipient in online_users:
-                    socketio.emit("message_edited", edit_data, room=online_users[msg.recipient])
+            _emit_to_message_participants(msg, "message_edited", edit_data)
             
             print(f"Message {message_id} edited by {editor}")
     except Exception as e:
@@ -1849,7 +1897,7 @@ def handle_delete_message(data):
     """Delete a message"""
     try:
         message_id = data.get('message_id')
-        deleter = data.get('deleter')
+        deleter = _current_socket_username(data)
         delete_for_everyone = data.get('delete_for_everyone', False)
         
         if not message_id or not deleter:
@@ -1859,6 +1907,9 @@ def handle_delete_message(data):
             msg = db.session.get(Message, message_id)
             if not msg:
                 return
+            if deleter not in _message_participants(msg):
+                emit("error", {"message": "Cannot delete this message"})
+                return
             
             if delete_for_everyone and msg.sender != deleter:
                 emit("error", {"message": "Can only delete for everyone if you're the sender"})
@@ -1867,10 +1918,10 @@ def handle_delete_message(data):
             if delete_for_everyone:
                 msg.deleted = True
                 msg.encrypted_message = xor_encrypt_decrypt("This message was deleted", 
-                                                           get_shared_key(msg.sender, msg.recipient or ""))
+                                                           _message_key(msg))
             else:
                 # Add user to deleted_for list
-                deleted_list = json.loads(msg.deleted_for) if msg.deleted_for else []
+                deleted_list = list(_deleted_for_users(msg))
                 if deleter not in deleted_list:
                     deleted_list.append(deleter)
                 msg.deleted_for = json.dumps(deleted_list)
@@ -1878,17 +1929,14 @@ def handle_delete_message(data):
             db.session.commit()
             
             delete_data = {
+                "id": message_id,
                 "message_id": message_id,
                 "deleted": True,
                 "delete_for_everyone": delete_for_everyone,
                 "deleter": deleter
             }
             
-            # Notify users
-            if msg.sender in online_users:
-                socketio.emit("message_deleted", delete_data, room=online_users[msg.sender])
-            if msg.recipient and msg.recipient in online_users:
-                socketio.emit("message_deleted", delete_data, room=online_users[msg.recipient])
+            _emit_to_message_participants(msg, "message_deleted", delete_data)
             
             print(f"Message {message_id} deleted by {deleter}")
     except Exception as e:
@@ -1911,7 +1959,7 @@ def upload_avatar():
         if not allowed_file(file.filename):
             return jsonify({"success": False, "error": "File type not allowed"})
         
-        filename = secure_filename(f"avatar_{username_param}_{int(datetime.utcnow().timestamp())}.{file.filename.rsplit('.', 1)[1].lower()}")
+        filename = secure_filename(f"avatar_{username_param}_{int(utcnow().timestamp())}.{file.filename.rsplit('.', 1)[1].lower()}")
         filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
         file.save(filepath)
         
@@ -2013,7 +2061,7 @@ def handle_reject_call(data):
             call = db.session.get(Call, call_id)
             if call and call.callee == callee:
                 call.status = 'rejected'
-                call.ended_at = datetime.utcnow()
+                call.ended_at = utcnow()
                 db.session.commit()
                 
                 # Notify caller
@@ -2040,7 +2088,7 @@ def handle_end_call(data):
             call = db.session.get(Call, call_id)
             if call and (call.caller == user or call.callee == user):
                 call.status = 'ended'
-                call.ended_at = datetime.utcnow()
+                call.ended_at = utcnow()
                 if call.started_at:
                     call.duration = int((call.ended_at - call.started_at).total_seconds())
                 db.session.commit()
@@ -2382,7 +2430,7 @@ def handle_create_group_invitation(data):
         
         # Generate unique token
         invite_token = secrets.token_urlsafe(16)
-        expires_at = datetime.utcnow() + timedelta(days=7)
+        expires_at = utcnow() + timedelta(days=7)
         
         invitation = GroupInvitation(
             group_id=group_id,
@@ -2428,7 +2476,7 @@ def handle_accept_group_invitation(data):
             emit("error", {"message": "Invalid invitation"})
             return
         
-        if invitation.expires_at and invitation.expires_at < datetime.utcnow():
+        if invitation.expires_at and invitation.expires_at < utcnow():
             invitation.status = 'expired'
             db.session.commit()
             emit("error", {"message": "Invitation expired"})
@@ -2523,7 +2571,7 @@ def handle_generate_qr_code(data):
         pairing_data = {
             "username": username,
             "token": device_token,
-            "expires": (datetime.utcnow() + timedelta(minutes=5)).isoformat()
+            "expires": (utcnow() + timedelta(minutes=5)).isoformat()
         }
         
         # In production, store in Redis or database
@@ -2555,7 +2603,7 @@ def handle_verify_qr_code(data):
         pairing_data = app.pairing_tokens[token]
         expires = datetime.fromisoformat(pairing_data['expires'])
         
-        if expires < datetime.utcnow():
+        if expires < utcnow():
             del app.pairing_tokens[token]
             emit("error", {"message": "Token expired"})
             return
@@ -2689,7 +2737,7 @@ def handle_sync_messages(data):
         
         emit("messages_synced", {
             "messages": message_list,
-            "sync_timestamp": datetime.utcnow().isoformat()
+            "sync_timestamp": utcnow().isoformat()
         })
     except Exception as e:
         print(f"Error syncing messages: {e}")
@@ -2698,13 +2746,16 @@ def handle_sync_messages(data):
 # ------------------ User Profile ------------------
 @socketio.on("get_user_profile")
 def handle_get_user_profile(data):
-    username = session.get("username")
+    username = session.get('username') or _username_for_sid(getattr(request, 'sid', None))
     if not username:
         emit("error", {"message": "Not logged in"})
         return
     
     try:
-        target_username = data.get("username")
+        target_username = _coerce_username(data.get("username"))
+        if not target_username:
+            emit("user_profile", {"error": "User not found"})
+            return
         target_user = User.query.filter_by(username=target_username).first()
         
         if not target_user:
@@ -2712,21 +2763,16 @@ def handle_get_user_profile(data):
             return
         
         # Get mutual groups
-        user_groups = GroupAdmin.query.filter_by(username=username).all()
-        target_groups = GroupAdmin.query.filter_by(username=target_username).all()
-        
-        user_group_names = set(ga.group_name for ga in user_groups)
-        target_group_names = set(ga.group_name for ga in target_groups)
+        viewer = User.query.filter_by(username=username).first()
+        user_group_names = {group.name for group in viewer.groups} if viewer else set()
+        target_group_names = {group.name for group in target_user.groups}
         mutual_groups = list(user_group_names & target_group_names)
         
-        # Check online status (check if user is in active_users)
-        is_online = target_username in active_users
+        is_online = target_username in online_users
         
-        # Get last seen (from last message or device session)
         last_seen = None
-        last_message = Message.query.filter_by(sender=target_username).order_by(Message.timestamp.desc()).first()
-        if last_message:
-            last_seen = last_message.timestamp.strftime("%b %d at %I:%M %p")
+        if target_user.show_last_seen and target_user.last_seen:
+            last_seen = target_user.last_seen.strftime("%b %d at %I:%M %p")
         
         emit("user_profile", {
             "username": target_username,
@@ -2743,7 +2789,7 @@ def handle_get_user_profile(data):
 # ------------------ Block User ------------------
 @socketio.on("block_user")
 def handle_block_user(data):
-    username = session.get("username")
+    username = session.get('username') or _username_for_sid(getattr(request, 'sid', None))
     if not username:
         emit("error", {"message": "Not logged in"})
         return
@@ -2761,7 +2807,7 @@ def handle_block_user(data):
 # ------------------ Media Gallery ------------------
 @socketio.on("get_media_gallery")
 def handle_get_media_gallery(data):
-    username = session.get("username")
+    username = _current_socket_username(data)
     if not username:
         emit("error", {"message": "Not logged in"})
         return
@@ -2772,8 +2818,12 @@ def handle_get_media_gallery(data):
         
         # Query messages with files
         if is_group:
+            group = Group.query.filter_by(name=recipient).first()
+            if not group:
+                emit("media_gallery", {"media": []})
+                return
             messages = Message.query.filter(
-                Message.recipient == recipient,
+                or_(Message.group_id == group.id, Message.recipient == recipient),
                 Message.message_type.in_(['image', 'file'])
             ).order_by(Message.timestamp.desc()).limit(100).all()
         else:
@@ -2787,6 +2837,8 @@ def handle_get_media_gallery(data):
         
         media_list = []
         for msg in messages:
+            if not _message_visible_to(msg, username) or msg.deleted:
+                continue
             media_list.append({
                 "id": msg.id,
                 "type": msg.message_type,
@@ -2803,50 +2855,33 @@ def handle_get_media_gallery(data):
 # ------------------ Message Pinning ------------------
 @socketio.on("pin_message")
 def handle_pin_message(data):
-    username = session.get("username")
+    username = _current_socket_username(data)
     if not username:
         emit("error", {"message": "Not logged in"})
         return
     
     try:
         message_id = data.get("message_id")
-        recipient = data.get("recipient")
-        is_group = data.get("is_group", False)
         
-        message = Message.query.get(message_id)
+        message = db.session.get(Message, message_id)
         if not message:
             emit("error", {"message": "Message not found"})
             return
-        
-        # Create chat_id for pin tracking
-        if is_group:
-            chat_id = recipient
-        else:
-            chat_id = "_".join(sorted([username, recipient]))
-        
-        # Store pinned status (you'd want a PinnedMessages table in production)
-        # For now, emit to all participants
-        if is_group:
-            # Get group members
-            admins = GroupAdmin.query.filter_by(group_name=recipient).all()
-            for admin in admins:
-                if admin.username in online_users:
-                    emit("message_pinned", {
-                        "message_id": message_id,
-                        "chat_id": chat_id
-                    }, room=online_users[admin.username])
-        else:
-            # Emit to both users
-            if username in online_users:
-                emit("message_pinned", {
-                    "message_id": message_id,
-                    "chat_id": chat_id
-                }, room=online_users[username])
-            if recipient in online_users:
-                emit("message_pinned", {
-                    "message_id": message_id,
-                    "chat_id": chat_id
-                }, room=online_users[recipient])
+
+        if username not in _message_participants(message):
+            emit("error", {"message": "Cannot pin this message"})
+            return
+
+        legacy_toggle = "recipient" not in data and "is_group" not in data
+        message.pinned = (not message.pinned) if legacy_toggle else True
+        db.session.commit()
+
+        payload = {
+            "id": message_id,
+            "message_id": message_id,
+            "pinned": message.pinned
+        }
+        _emit_to_message_participants(message, "message_pinned" if message.pinned else "message_unpinned", payload)
         
     except Exception as e:
         print(f"Error pinning message: {e}")
@@ -2854,42 +2889,30 @@ def handle_pin_message(data):
 
 @socketio.on("unpin_message")
 def handle_unpin_message(data):
-    username = session.get("username")
+    username = _current_socket_username(data)
     if not username:
         emit("error", {"message": "Not logged in"})
         return
     
     try:
         message_id = data.get("message_id")
-        recipient = data.get("recipient")
-        is_group = data.get("is_group", False)
-        
-        # Create chat_id
-        if is_group:
-            chat_id = recipient
-        else:
-            chat_id = "_".join(sorted([username, recipient]))
-        
-        # Emit to all participants
-        if is_group:
-            admins = GroupAdmin.query.filter_by(group_name=recipient).all()
-            for admin in admins:
-                if admin.username in online_users:
-                    emit("message_unpinned", {
-                        "message_id": message_id,
-                        "chat_id": chat_id
-                    }, room=online_users[admin.username])
-        else:
-            if username in online_users:
-                emit("message_unpinned", {
-                    "message_id": message_id,
-                    "chat_id": chat_id
-                }, room=online_users[username])
-            if recipient in online_users:
-                emit("message_unpinned", {
-                    "message_id": message_id,
-                    "chat_id": chat_id
-                }, room=online_users[recipient])
+
+        message = db.session.get(Message, message_id)
+        if not message:
+            emit("error", {"message": "Message not found"})
+            return
+        if username not in _message_participants(message):
+            emit("error", {"message": "Cannot unpin this message"})
+            return
+
+        message.pinned = False
+        db.session.commit()
+
+        _emit_to_message_participants(message, "message_unpinned", {
+            "id": message_id,
+            "message_id": message_id,
+            "pinned": False
+        })
         
     except Exception as e:
         print(f"Error unpinning message: {e}")

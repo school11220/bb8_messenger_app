@@ -51,6 +51,15 @@ function getInitials(name) {
     return name ? name.substring(0, 2).toUpperCase() : '??';
 }
 
+function getCurrentGroup() {
+    if (!currentRecipient) return null;
+    return allGroups.find(group => group.name === currentRecipient || `group_${group.id}` === currentRecipient) || null;
+}
+
+function isCurrentGroup() {
+    return Boolean(getCurrentGroup());
+}
+
 // Insert emoji at cursor position in the message input
 function insertEmoji() {
     // Fallback insertion if EmojiButton not available
@@ -634,6 +643,9 @@ function appendMessage(sender, message, data = {}) {
     msgDiv.classList.add(sender === username ? "sent" : "received");
     msgDiv.dataset.messageId = data.id || Date.now();
     const msgId = msgDiv.dataset.messageId;
+    if (data.pinned) {
+        msgDiv.classList.add('pinned');
+    }
     
     if (!isCluster) {
         msgDiv.classList.add("first");
@@ -672,7 +684,7 @@ function appendMessage(sender, message, data = {}) {
     bubble.className = "message-bubble";
     
     // Sender name (only for first in cluster and only for groups)
-    if (!isCluster && sender !== username && (data.group_id || (currentRecipient && String(currentRecipient).startsWith('group_')))) {
+    if (!isCluster && sender !== username && (data.group_id || isCurrentGroup())) {
         const senderName = document.createElement("div");
         senderName.className = "sender-name";
         senderName.textContent = sender;
@@ -939,7 +951,7 @@ function showTypingIndicator(sender, conversationId) {
     // Only show if viewing this conversation
     const isCurrentConversation = 
         (conversationId === currentRecipient) || 
-        (conversationId.startsWith('group_') && currentRecipient && currentRecipient.startsWith('group_'));
+        (conversationId.startsWith('group_') && getCurrentGroup() && conversationId === `group_${getCurrentGroup().id}`);
     
     if (!isCurrentConversation) return;
     
@@ -1017,7 +1029,7 @@ function updateTypingIndicatorDisplay(conversationId) {
 }
 
 
-function hideTypingIndicator(sender) {
+function hideLegacyTypingIndicator(sender) {
     const indicator = document.querySelector(`.typing-indicator[data-sender="${sender}"]`);
     if (indicator) indicator.remove();
 }
@@ -1138,9 +1150,9 @@ async function handleFileUpload(event) {
 function sendFileMessage(fileUrl, fileName, fileType) {
     if (!currentRecipient) return;
     
-    const isGroup = allGroups.some(g => g.name === currentRecipient);
+    const group = getCurrentGroup();
     
-    if (isGroup) {
+    if (group) {
         socket.emit("send_group_message", {
             sender: username,
             group_name: currentRecipient,
@@ -1167,7 +1179,7 @@ function sendMessage() {
     const text = input.value.trim();
     
     if (text && currentRecipient) {
-        const isGroup = allGroups.some(g => g.name === currentRecipient);
+        const group = getCurrentGroup();
         
         const messageData = {
             sender: username,
@@ -1180,7 +1192,7 @@ function sendMessage() {
             messageData.reply_to_id = Number(replyToMessage.id);
         }
         
-        if (isGroup) {
+        if (group) {
             messageData.group_name = currentRecipient;
             socket.emit("send_group_message", messageData);
         } else {
@@ -1195,8 +1207,8 @@ function sendMessage() {
         
         // Send stop typing with group_id if in group chat
         const stopTypingData = { sender: username };
-        if (isGroup) {
-            stopTypingData.group_id = parseInt(currentRecipient.split('_')[1]);
+        if (group) {
+            stopTypingData.group_id = group.id;
         } else {
             stopTypingData.recipient = currentRecipient;
         }
@@ -1221,10 +1233,10 @@ function handleTyping() {
     if (!currentRecipient) return;
     
     // Send typing with group_id if in group chat
-    const isGroup = currentRecipient && currentRecipient.startsWith('group_');
+    const group = getCurrentGroup();
     const typingData = { sender: username };
-    if (isGroup) {
-        typingData.group_id = parseInt(currentRecipient.split('_')[1]);
+    if (group) {
+        typingData.group_id = group.id;
     } else {
         typingData.recipient = currentRecipient;
     }
@@ -1234,9 +1246,9 @@ function handleTyping() {
     
     typingTimeout = setTimeout(() => {
         const stopTypingData = { sender: username };
-        const isGroupCheck = currentRecipient && currentRecipient.startsWith('group_');
-        if (isGroupCheck) {
-            stopTypingData.group_id = parseInt(currentRecipient.split('_')[1]);
+        const currentGroup = getCurrentGroup();
+        if (currentGroup) {
+            stopTypingData.group_id = currentGroup.id;
         } else {
             stopTypingData.recipient = currentRecipient;
         }
@@ -1441,6 +1453,8 @@ socket.on("chat_history", data => {
     history.forEach(msg => {
         appendMessage(msg.sender, msg.message, msg);
     });
+    pinnedMessages[currentRecipient] = history.filter(msg => msg.pinned).map(msg => String(msg.id));
+    updatePinnedBanner();
 });
 
 socket.on("history_cleared", () => {
@@ -1561,6 +1575,8 @@ socket.on("group_history", data => {
     history.forEach(msg => {
         appendMessage(msg.sender, msg.message, msg);
     });
+    pinnedMessages[currentRecipient] = history.filter(msg => msg.pinned).map(msg => String(msg.id));
+    updatePinnedBanner();
 });
 
 socket.on("group_message", data => {
@@ -2168,11 +2184,13 @@ socket.on('ice_candidate', async data => {
 
 // Socket handlers for message edit/delete
 socket.on('message_edited', data => {
-    const messageDiv = document.querySelector(`[data-message-id="${data.message_id}"]`);
+    const messageId = data.message_id || data.id;
+    const newText = data.new_text || data.new_message;
+    const messageDiv = document.querySelector(`[data-message-id="${messageId}"]`);
     if (messageDiv) {
         const textEl = messageDiv.querySelector('.message-text');
-        if (textEl) {
-            textEl.textContent = data.new_text;
+        if (textEl && newText) {
+            textEl.textContent = newText;
         }
         const meta = messageDiv.querySelector('.message-meta');
         if (meta && !meta.textContent.includes('edited')) {
@@ -2182,7 +2200,8 @@ socket.on('message_edited', data => {
 });
 
 socket.on('message_deleted', data => {
-    const messageDiv = document.querySelector(`[data-message-id="${data.message_id}"]`);
+    const messageId = data.message_id || data.id;
+    const messageDiv = document.querySelector(`[data-message-id="${messageId}"]`);
     if (messageDiv) {
         if (data.delete_for_everyone || data.deleter === username) {
             const textEl = messageDiv.querySelector('.message-text');
@@ -2246,18 +2265,18 @@ document.addEventListener('DOMContentLoaded', () => {
 
 let currentGroupId = null;
 
-function openGroupSettingsModal(groupId) {
-    currentGroupId = groupId;
+function openGroupSettingsModal(groupRef) {
+    const group = allGroups.find(g => g.name === groupRef || `group_${g.id}` === groupRef || g.id === groupRef);
+    if (!group) return;
+
+    currentGroupId = group.id;
     byId('groupSettingsModal').style.display = 'flex';
     
     // Load group details
-    const group = allGroups.find(g => `group_${g.id}` === groupId);
-    if (group) {
-        byId('editGroupName').value = group.name;
-        loadGroupMembers(group.id);
-        loadGroupAdmins(group.id);
-        populateAddMemberSelect(group.id);
-    }
+    byId('editGroupName').value = group.name;
+    loadGroupMembers(group.id);
+    loadGroupAdmins(group.id);
+    populateAddMemberSelect(group.id);
 }
 
 function closeGroupSettingsModal() {
@@ -2330,7 +2349,7 @@ function updateGroupName() {
     const newName = byId('editGroupName').value.trim();
     if (!newName || !currentGroupId) return;
     
-    const groupId = parseInt(currentGroupId.split('_')[1]);
+    const groupId = Number(currentGroupId);
     socket.emit('edit_group', {
         group_id: groupId,
         new_name: newName,
@@ -2342,7 +2361,7 @@ function addMemberToGroup() {
     const selectedUser = byId('addMemberSelect').value;
     if (!selectedUser || !currentGroupId) return;
     
-    const groupId = parseInt(currentGroupId.split('_')[1]);
+    const groupId = Number(currentGroupId);
     socket.emit('add_group_member', {
         group_id: groupId,
         username: selectedUser,
@@ -2354,7 +2373,7 @@ function removeMemberFromGroup(memberUsername) {
     if (!currentGroupId) return;
     if (!confirm(`Remove ${memberUsername} from group?`)) return;
     
-    const groupId = parseInt(currentGroupId.split('_')[1]);
+    const groupId = Number(currentGroupId);
     socket.emit('remove_group_member', {
         group_id: groupId,
         username: memberUsername,
@@ -2365,7 +2384,7 @@ function removeMemberFromGroup(memberUsername) {
 function promoteToAdmin(memberUsername) {
     if (!currentGroupId) return;
     
-    const groupId = parseInt(currentGroupId.split('_')[1]);
+    const groupId = Number(currentGroupId);
     socket.emit('promote_to_admin', {
         group_id: groupId,
         username: memberUsername,
@@ -2377,7 +2396,7 @@ function demoteAdmin(adminUsername) {
     if (!currentGroupId) return;
     if (!confirm(`Demote ${adminUsername} from admin?`)) return;
     
-    const groupId = parseInt(currentGroupId.split('_')[1]);
+    const groupId = Number(currentGroupId);
     socket.emit('demote_admin', {
         group_id: groupId,
         username: adminUsername,
@@ -2389,7 +2408,7 @@ function createInvitation() {
     const inviteUsername = byId('inviteUsername').value.trim();
     if (!inviteUsername || !currentGroupId) return;
     
-    const groupId = parseInt(currentGroupId.split('_')[1]);
+    const groupId = Number(currentGroupId);
     socket.emit('create_group_invitation', {
         group_id: groupId,
         inviter: username,
@@ -2401,14 +2420,14 @@ function createInvitation() {
 socket.on('promotion_success', data => {
     showNotification(data.message);
     if (currentGroupId) {
-        loadGroupAdmins(parseInt(currentGroupId.split('_')[1]));
+        loadGroupAdmins(Number(currentGroupId));
     }
 });
 
 socket.on('demotion_success', data => {
     showNotification(data.message);
     if (currentGroupId) {
-        loadGroupAdmins(parseInt(currentGroupId.split('_')[1]));
+        loadGroupAdmins(Number(currentGroupId));
     }
 });
 
@@ -2416,7 +2435,7 @@ socket.on('member_add_success', data => {
     showNotification(data.message);
     socket.emit('get_user_groups', { username });
     if (currentGroupId) {
-        const groupId = parseInt(currentGroupId.split('_')[1]);
+        const groupId = Number(currentGroupId);
         loadGroupMembers(groupId);
         populateAddMemberSelect(groupId);
     }
@@ -2426,7 +2445,7 @@ socket.on('member_remove_success', data => {
     showNotification(data.message);
     socket.emit('get_user_groups', { username });
     if (currentGroupId) {
-        const groupId = parseInt(currentGroupId.split('_')[1]);
+        const groupId = Number(currentGroupId);
         loadGroupMembers(groupId);
         populateAddMemberSelect(groupId);
     }
@@ -2473,9 +2492,9 @@ socket.on('member_removed', data => {
 socket.on('removed_from_group', data => {
     showNotification(`You were removed from ${data.group_name}`);
     socket.emit('get_user_groups', { username });
-    if (currentRecipient === `group_${data.group_id}`) {
+    if (currentRecipient === data.group_name || currentRecipient === `group_${data.group_id}`) {
         currentRecipient = null;
-        byId('chatWindow').style.display = 'none';
+        byId('chat-window').style.display = 'none';
     }
 });
 
@@ -2620,9 +2639,13 @@ function verifyQRCode() {
 }
 
 socket.on('device_paired', data => {
-    showNotification(`Device paired: ${data.device_name}`);
-    closeMultiDeviceModal();
-    loadDevices();
+    const authScreen = byId('auth-screen');
+    const isOnAuthScreen = authScreen && authScreen.style.display !== 'none';
+    if (!isOnAuthScreen) {
+        showNotification(`Device paired: ${data.device_name}`);
+        closeMultiDeviceModal();
+        loadDevices();
+    }
 });
 
 socket.on('new_device_paired', data => {
@@ -2658,7 +2681,7 @@ function addGroupSettingsButtonToHeader() {
     if (existingBtn) existingBtn.remove();
     
     const chatHeader = document.querySelector('.chat-header-actions');
-    if (chatHeader && currentRecipient && currentRecipient.startsWith('group_')) {
+    if (chatHeader && isCurrentGroup()) {
         const groupBtn = document.createElement('button');
         groupBtn.id = 'groupSettingsBtn';
         groupBtn.className = 'btn-icon';
@@ -2803,18 +2826,10 @@ socket.on('device_paired', data => {
     if (isOnAuthScreen && data.username) {
         // This is a QR login - auto-login the user
         showNotification(`Logging in as ${data.username}...`);
-        username = data.username;
-        
-        // Register with socket
-        socket.emit("register_user", { username: data.username });
+        startChatSession(data.username);
         
         // Close QR scanner if open
         closeQRScanner();
-    } else if (!isOnAuthScreen) {
-        // Already logged in, just show notification
-        showNotification(`Device paired: ${data.device_name}`);
-        closeMultiDeviceModal();
-        loadDevices();
     }
 });
 
@@ -2937,8 +2952,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (diffX > 60) {
             // Swipe right - Reply
             const messageId = swipedMessage.dataset.messageId;
-            const messageText = swipedMessage.querySelector('.message-text')?.textContent || 'Message';
-            replyToMessage(messageId, messageText);
+            replyToMessageFunc(messageId);
         } else if (diffX < -60) {
             // Swipe left - Delete (if own message)
             const messageId = swipedMessage.dataset.messageId;
@@ -2980,7 +2994,7 @@ socket.on('user_profile', data => {
         return;
     }
     
-    byId('profileAvatar').src = data.avatar_url || '/static/default-avatar.png';
+    byId('profileAvatar').src = data.avatar_url || '/static/default-avatar.svg';
     byId('profileBio').value = data.bio || 'No bio yet...';
     
     // Status
@@ -3039,7 +3053,7 @@ function openMediaGallery() {
     // Request media
     socket.emit('get_media_gallery', { 
         recipient: currentRecipient,
-        is_group: currentIsGroup
+        is_group: isCurrentGroup()
     });
 }
 
@@ -3112,7 +3126,7 @@ function filterMediaGallery(filter) {
     // Re-request media
     socket.emit('get_media_gallery', { 
         recipient: currentMediaRecipient,
-        is_group: currentIsGroup
+        is_group: Boolean(allGroups.find(group => group.name === currentMediaRecipient || `group_${group.id}` === currentMediaRecipient))
     });
 }
 
@@ -3223,7 +3237,7 @@ function togglePinMessage(messageId) {
         socket.emit('unpin_message', { 
             message_id: messageId,
             recipient: currentRecipient,
-            is_group: currentIsGroup
+            is_group: isCurrentGroup()
         });
     } else {
         // Pin (max 3)
@@ -3234,7 +3248,7 @@ function togglePinMessage(messageId) {
         socket.emit('pin_message', { 
             message_id: messageId,
             recipient: currentRecipient,
-            is_group: currentIsGroup
+            is_group: isCurrentGroup()
         });
     }
 }

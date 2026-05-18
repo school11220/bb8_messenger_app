@@ -7,5 +7,13 @@ unset POSTGRES_URL
 unset POSTGRESQL_URL
 unset PG_URI
 unset DB_URL
-source venv/bin/activate
-python app.py
+
+if [ -x ".venv/bin/python" ]; then
+    PYTHON=".venv/bin/python"
+elif [ -x "venv/bin/python" ]; then
+    PYTHON="venv/bin/python"
+else
+    PYTHON="$(command -v python3 || command -v python)"
+fi
+
+"$PYTHON" app.py
