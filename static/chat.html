@@ -2022,7 +2022,7 @@
                 <p class="subtitle">Sign in to continue to BB84 Chat</p>
                 <input id="login-username" type="text" placeholder="Username" required>
                 <input id="login-password" type="password" placeholder="Password" required>
-                <button onclick="login()">Sign In</button>
+                <button type="button" onclick="login()">Sign In</button>
                 
                 <div style="margin: 20px 0; text-align: center; color: var(--text-tertiary); font-size: 14px;">
                     <span style="position: relative; z-index: 1; background: var(--bg-secondary); padding: 0 10px;">OR</span>
@@ -2047,7 +2047,7 @@
                 <p class="subtitle">Join BB84 Quantum Chat today</p>
                 <input id="register-username" type="text" placeholder="Choose a username" required>
                 <input id="register-password" type="password" placeholder="Create a password" required>
-                <button onclick="register()">Sign Up</button>
+                <button type="button" onclick="register()">Sign Up</button>
                 <p class="auth-toggle">Already have an account? <a onclick="toggleAuth('login')">Sign In</a></p>
                 <p id="register-error" class="error" style="display: none;"></p>
             </div>

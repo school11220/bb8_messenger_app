@@ -5,9 +5,9 @@ const socket = io({
     reconnectionDelayMax: 5000,
     reconnectionAttempts: 5,
     timeout: 20000,
-    transports: ['websocket', 'polling'],
+    transports: ['polling', 'websocket'],
     upgrade: true,
-    rememberUpgrade: true
+    rememberUpgrade: false
 });
 let username = null;
 let currentRecipient = null;
@@ -18,6 +18,9 @@ const userStatuses = {};
 let allUsers = [];
 let allGroups = [];
 let replyToMessage = null;
+let authRequestInFlight = false;
+let lastRegisteredSocketId = null;
+let lastRegisteredSocketUsername = null;
 
 // Cache messages by id for quick lookup when rendering reply previews
 window.messageIndex = window.messageIndex || {};
@@ -237,88 +240,65 @@ function toggleAuth(mode) {
     byId('register-error').style.display = 'none';
 }
 
+function setAuthError(errorEl, message) {
+    if (!errorEl) return;
+    errorEl.textContent = message || '';
+    errorEl.style.display = message ? 'block' : 'none';
+}
+
+function getAuthButton(endpoint) {
+    const selector = endpoint === '/login'
+        ? '#login-box button[onclick="login()"]'
+        : '#register-box button[onclick="register()"]';
+    return document.querySelector(selector);
+}
+
+async function readJsonResponse(response) {
+    try {
+        return await response.json();
+    } catch (error) {
+        return {};
+    }
+}
+
 async function performAuth(endpoint, user, pass, errorEl) {
     if (!user || !pass) {
-        errorEl.textContent = 'Please fill in all fields';
-        errorEl.style.display = 'block';
+        setAuthError(errorEl, 'Please fill in all fields');
         return;
     }
-    
-    // Check if socket is connected
-    if (!socket.connected) {
-        errorEl.textContent = 'Connecting to server...';
-        errorEl.style.display = 'block';
-        
-        // Wait for connection with timeout
-        let connectionTimeout;
-        const waitForConnection = new Promise((resolve, reject) => {
-            if (socket.connected) {
-                resolve();
-                return;
-            }
-            
-            const onConnect = () => {
-                socket.off('connect', onConnect);
-                socket.off('connect_error', onError);
-                clearTimeout(connectionTimeout);
-                resolve();
-            };
-            
-            const onError = (error) => {
-                socket.off('connect', onConnect);
-                socket.off('connect_error', onError);
-                clearTimeout(connectionTimeout);
-                reject(error);
-            };
-            
-            socket.on('connect', onConnect);
-            socket.on('connect_error', onError);
-            
-            connectionTimeout = setTimeout(() => {
-                socket.off('connect', onConnect);
-                socket.off('connect_error', onError);
-                reject(new Error('Connection timeout'));
-            }, 5000);
-        });
-        
-        try {
-            await waitForConnection;
-            errorEl.style.display = 'none';
-        } catch (error) {
-            errorEl.textContent = 'Cannot connect to server. Please check your connection.';
-            errorEl.style.display = 'block';
-            return;
-        }
+
+    if (authRequestInFlight) {
+        return;
     }
-    
+
+    authRequestInFlight = true;
+    setAuthError(errorEl, '');
+    const submitButton = getAuthButton(endpoint);
+    if (submitButton) submitButton.disabled = true;
+
     try {
         const response = await fetch(endpoint, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
+            credentials: 'same-origin',
             body: JSON.stringify({ username: user, password: pass })
         });
-        
-        if (!response.ok) {
-            throw new Error(`HTTP error! status: ${response.status}`);
-        }
-        
-        const data = await response.json();
-        
+
+        const data = await readJsonResponse(response);
+
         if (data.success) {
-            startChatSession(user);
+            startChatSession(data.username || user);
             requestNotificationPermission();
-        } else {
-            errorEl.textContent = data.error || 'Authentication failed';
-            errorEl.style.display = 'block';
+            return;
         }
+
+        setAuthError(errorEl, data.error || 'Authentication failed');
     } catch (error) {
-        console.error('Auth error:', error);
-        if (error.name === 'TypeError' && error.message.includes('fetch')) {
-            errorEl.textContent = 'Cannot reach server. Please check your connection.';
-        } else {
-            errorEl.textContent = 'Connection error. Please try again.';
-        }
-        errorEl.style.display = 'block';
+        console.warn('Auth request failed:', error);
+        setAuthError(errorEl, 'Cannot reach server. Please check your connection.');
+    } finally {
+        authRequestInFlight = false;
+        if (submitButton) submitButton.disabled = false;
     }
 }
 
@@ -338,21 +318,47 @@ function register() {
     );
 }
 
-function startChatSession(user) {
-    username = user;
-    byId('auth-screen').style.display = 'none';
-    byId('chat-screen').style.display = 'flex';
+function registerActiveSocket(force = false) {
+    if (!username) return;
+
+    if (!socket.connected) {
+        if (socket.disconnected) {
+            socket.connect();
+        }
+        return;
+    }
+
+    const socketId = socket.id || 'connected';
+    if (!force && lastRegisteredSocketId === socketId && lastRegisteredSocketUsername === username) {
+        return;
+    }
+
+    lastRegisteredSocketId = socketId;
+    lastRegisteredSocketUsername = username;
     socket.emit("register_user", username);
     socket.emit("update_status", { username, status: "online" });
     socket.emit("get_user_groups", { username });
 }
 
-function logout() {
+function startChatSession(user) {
+    username = user;
+    byId('auth-screen').style.display = 'none';
+    byId('chat-screen').style.display = 'flex';
+    registerActiveSocket();
+}
+
+async function logout() {
     if (!confirm('Are you sure you want to logout?')) return;
     
     // Update status to offline
-    if (username) {
+    if (username && socket.connected) {
         socket.emit("update_status", { username, status: "offline" });
+    }
+
+    try {
+        await fetch('/logout', { method: 'POST', credentials: 'same-origin' });
+    } catch (error) {
+        console.warn('Server logout failed:', error);
     }
     
     // Disconnect socket
@@ -364,6 +370,8 @@ function logout() {
     allUsers = [];
     allGroups = [];
     replyToMessage = null;
+    lastRegisteredSocketId = null;
+    lastRegisteredSocketUsername = null;
     
     // Stop any ongoing calls
     if (localStream) {
@@ -1387,22 +1395,20 @@ socket.on("connect", () => {
     if (loginError) loginError.style.display = 'none';
     if (registerError) registerError.style.display = 'none';
     
-    if (username) {
-        socket.emit("register_user", username);
-        socket.emit("update_status", { username, status: "online" });
-        socket.emit("get_user_groups", { username });
-    }
+    registerActiveSocket();
 });
 
 socket.on("connect_error", (error) => {
-    console.error("Connection error:", error);
+    console.warn("Socket connection error:", error?.message || error);
     const loginError = byId('login-error');
     const registerError = byId('register-error');
-    if (loginError && loginError.parentElement.style.display !== 'none') {
+    const authScreen = byId('auth-screen');
+    const authVisible = authScreen && authScreen.style.display !== 'none';
+    if (authVisible && loginError && loginError.parentElement.style.display !== 'none') {
         loginError.textContent = 'Connection error. Please try again.';
         loginError.style.display = 'block';
     }
-    if (registerError && registerError.parentElement.style.display !== 'none') {
+    if (authVisible && registerError && registerError.parentElement.style.display !== 'none') {
         registerError.textContent = 'Connection error. Please try again.';
         registerError.style.display = 'block';
     }
@@ -1410,24 +1416,26 @@ socket.on("connect_error", (error) => {
 
 socket.on("reconnect", (attemptNumber) => {
     console.log("Reconnected after", attemptNumber, "attempts");
-    if (username) {
-        socket.emit("register_user", username);
-        socket.emit("update_status", { username, status: "online" });
-        socket.emit("get_user_groups", { username });
-    }
+    registerActiveSocket();
 });
 
 socket.on("reconnect_error", (error) => {
-    console.error("Reconnection error:", error);
+    console.warn("Socket reconnection error:", error?.message || error);
 });
 
 socket.on("reconnect_failed", () => {
-    console.error("Reconnection failed");
+    console.warn("Socket reconnection failed");
     showNotification("Connection lost. Please refresh the page.");
 });
 
 socket.on("disconnect", () => {
     console.log("Disconnected from server");
+    lastRegisteredSocketId = null;
+});
+
+socket.on("error", data => {
+    const message = data?.message || data?.error || 'Something went wrong';
+    showNotification(message);
 });
 
 socket.on("update_users", data => {

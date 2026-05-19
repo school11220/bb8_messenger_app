@@ -20,6 +20,7 @@ from flask_socketio import SocketIO, emit
 from threading import Lock
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import and_, or_, text
+from sqlalchemy.exc import IntegrityError
 import logging
 from logging.handlers import RotatingFileHandler
 import base64
@@ -272,7 +273,7 @@ def verify_password(stored_password, provided_password):
     if not stored_password or not provided_password:
         return False
 
-    if stored_password.startswith("pbkdf2:"):
+    if stored_password.startswith(("pbkdf2:", "scrypt:")):
         try:
             return check_password_hash(stored_password, provided_password)
         except ValueError:
@@ -512,10 +513,13 @@ def admin_get_logs():
 
 @app.route("/login", methods=["POST"])
 def login():
-    data = request.json
+    data = request.get_json(silent=True) or {}
     username = (data.get("username") or "").strip()
     password = data.get("password") or ""
-    
+
+    if not username or not password:
+        return jsonify({"success": False, "error": "Username and password required"})
+
     print(f"Login attempt for user: {username}")
     
     # Try database first (for production)
@@ -530,6 +534,7 @@ def login():
                 return jsonify({"success": True, "username": username})
             else:
                 print(f"Password verification failed for: {username}")
+                return jsonify({"success": False, "error": "Invalid credentials"})
         else:
             print(f"User not found in database: {username}")
     
@@ -549,34 +554,43 @@ def login():
 
 @app.route("/register", methods=["POST"])
 def register():
-    data = request.json
+    data = request.get_json(silent=True) or {}
     username = (data.get("username") or "").strip()
     password = (data.get("password") or "").strip()
     
     print(f"Registration attempt for user: {username}")
     
     if not username or not password:
-        return jsonify({"success": False, "error": "Username and password required"}), 400
+        return jsonify({"success": False, "error": "Username and password required"})
 
     if len(username) < 3 or len(password) < 6:
-        return jsonify({"success": False, "error": "Username must be 3+ chars and password 6+ chars"}), 400
+        return jsonify({"success": False, "error": "Username must be 3+ chars and password 6+ chars"})
+
+    users = load_users()
+    if username in users:
+        print(f"Username already taken in users.json: {username}")
+        return jsonify({"success": False, "error": "Username already taken"})
 
     # Check if user already exists in database
     with app.app_context():
         existing_user = User.query.filter_by(username=username).first()
         if existing_user:
             print(f"Username already taken: {username}")
-            return jsonify({"success": False, "error": "Username taken"})
+            return jsonify({"success": False, "error": "Username already taken"})
         
         # Create new user in database
         password_hash = generate_password_hash(password)
         new_user = User(username=username, password_hash=password_hash)
-        db.session.add(new_user)
-        db.session.commit()
+        try:
+            db.session.add(new_user)
+            db.session.commit()
+        except IntegrityError:
+            db.session.rollback()
+            print(f"Username already taken during commit: {username}")
+            return jsonify({"success": False, "error": "Username already taken"})
         print(f"User created in database: {username}")
     
     # Also save to users.json for local development compatibility
-    users = load_users()
     users[username] = password_hash
     save_users(users)
     
@@ -591,8 +605,9 @@ def register():
 def check_session():
     """Check if user is already logged in"""
     username = session.get('username')
-    if username:
+    if username and (User.query.filter_by(username=username).first() or username in load_users()):
         return jsonify({"logged_in": True, "username": username})
+    session.pop('username', None)
     return jsonify({"logged_in": False})
 
 @app.route("/logout", methods=["POST"])

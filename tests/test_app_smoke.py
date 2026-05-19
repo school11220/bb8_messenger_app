@@ -33,9 +33,19 @@ def test_health_and_auth_flow():
     username = f"user_{uuid.uuid4().hex[:8]}"
     _register(client, username)
 
+    duplicate = client.post("/register", json={"username": username, "password": "secret123"})
+    assert duplicate.status_code == 200
+    duplicate_payload = duplicate.get_json()
+    assert duplicate_payload["success"] is False
+    assert "taken" in duplicate_payload["error"].lower()
+
     login = client.post("/login", json={"username": username, "password": "secret123"})
     assert login.status_code == 200
     assert login.get_json()["success"] is True
+
+    bad_login = client.post("/login", json={"username": username, "password": "wrong-password"})
+    assert bad_login.status_code == 200
+    assert bad_login.get_json()["success"] is False
 
     session_check = client.get("/check_session")
     assert session_check.get_json() == {"logged_in": True, "username": username}
