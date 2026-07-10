@@ -21,6 +21,7 @@ let replyToMessage = null;
 let authRequestInFlight = false;
 let lastRegisteredSocketId = null;
 let lastRegisteredSocketUsername = null;
+let socketAutoConnectEnabled = false;
 
 // Cache messages by id for quick lookup when rendering reply previews
 window.messageIndex = window.messageIndex || {};
@@ -322,7 +323,7 @@ function registerActiveSocket(force = false) {
     if (!username) return;
 
     if (!socket.connected) {
-        if (socket.disconnected) {
+        if (socket.disconnected && socketAutoConnectEnabled) {
             socket.connect();
         }
         return;
@@ -342,6 +343,7 @@ function registerActiveSocket(force = false) {
 
 function startChatSession(user) {
     username = user;
+    socketAutoConnectEnabled = true;
     byId('auth-screen').style.display = 'none';
     byId('chat-screen').style.display = 'flex';
     registerActiveSocket();
@@ -391,6 +393,7 @@ async function logout() {
     // Show auth screen
     byId('chat-screen').style.display = 'none';
     byId('auth-screen').style.display = 'flex';
+    socketAutoConnectEnabled = true;
     
     // Reconnect socket for next login
     setTimeout(() => {

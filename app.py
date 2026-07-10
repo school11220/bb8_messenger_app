@@ -281,6 +281,10 @@ def verify_password(stored_password, provided_password):
 
     return stored_password == provided_password
 
+
+def _is_werkzeug_password_hash(value):
+    return isinstance(value, str) and value.startswith(("pbkdf2:", "scrypt:"))
+
 # ------------------ BB84 with Qiskit ------------------
 def bb84_protocol(n=32):
     """Fast key generation (simulated BB84 for performance)"""
@@ -524,17 +528,28 @@ def login():
     
     # Try database first (for production)
     with app.app_context():
-        user = User.query.filter_by(username=username).first()
+        try:
+            user = User.query.filter_by(username=username).first()
+        except Exception as e:
+            print(f"Login database lookup failed for {username}: {e}")
+            user = None
+
         if user:
             print(f"User found in database: {username}")
-            if check_password_hash(user.password_hash, password):
+            if verify_password(user.password_hash, password):
+                if not _is_werkzeug_password_hash(user.password_hash):
+                    user.password_hash = generate_password_hash(password)
+                    try:
+                        db.session.commit()
+                    except Exception as e:
+                        db.session.rollback()
+                        print(f"Password hash upgrade failed for {username}: {e}")
                 print(f"Password verified for: {username}")
                 session['username'] = username
                 session.permanent = True
                 return jsonify({"success": True, "username": username})
-            else:
-                print(f"Password verification failed for: {username}")
-                return jsonify({"success": False, "error": "Invalid credentials"})
+            print(f"Password verification failed for: {username}")
+            return jsonify({"success": False, "error": "Invalid credentials"})
         else:
             print(f"User not found in database: {username}")
     
