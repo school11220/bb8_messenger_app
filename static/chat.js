@@ -1,14 +1,31 @@
 // ==================== SOCKET & STATE ====================
-const socket = io({
-    reconnection: true,
-    reconnectionDelay: 1000,
-    reconnectionDelayMax: 5000,
-    reconnectionAttempts: 5,
-    timeout: 20000,
-    transports: ['polling', 'websocket'],
-    upgrade: true,
-    rememberUpgrade: false
-});
+const byId = id => document.getElementById(id);
+
+function createSocketFallback() {
+    return {
+        connected: false,
+        disconnected: true,
+        id: null,
+        connect() {},
+        disconnect() {},
+        emit() {},
+        on() {},
+        off() {}
+    };
+}
+
+const socket = typeof window.io === 'function'
+    ? window.io({
+        reconnection: true,
+        reconnectionDelay: 1000,
+        reconnectionDelayMax: 5000,
+        reconnectionAttempts: 5,
+        timeout: 20000,
+        transports: ['polling', 'websocket'],
+        upgrade: true,
+        rememberUpgrade: false
+    })
+    : createSocketFallback();
 let username = null;
 let currentRecipient = null;
 const sharedKeys = {};
@@ -49,7 +66,6 @@ const iceServers = {
 let pendingIceCandidates = [];
 
 // ==================== HELPER FUNCTIONS ====================
-const byId = id => document.getElementById(id);
 
 function getInitials(name) {
     return name ? name.substring(0, 2).toUpperCase() : '??';
