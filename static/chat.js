@@ -23,7 +23,10 @@ const socket = typeof window.io === 'function'
         timeout: 20000,
         transports: ['polling', 'websocket'],
         upgrade: true,
-        rememberUpgrade: false
+        rememberUpgrade: false,
+        // Authentication is HTTP-session based. Connect only after login or
+        // session restoration so the auth screen does not open an anonymous socket.
+        autoConnect: false
     })
     : createSocketFallback();
 let username = null;
@@ -409,12 +412,7 @@ async function logout() {
     // Show auth screen
     byId('chat-screen').style.display = 'none';
     byId('auth-screen').style.display = 'flex';
-    socketAutoConnectEnabled = true;
-    
-    // Reconnect socket for next login
-    setTimeout(() => {
-        socket.connect();
-    }, 500);
+    socketAutoConnectEnabled = false;
     
     showNotification('Logged out successfully');
 }

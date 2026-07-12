@@ -51,6 +51,17 @@ def test_health_and_auth_flow():
     assert session_check.get_json() == {"logged_in": True, "username": username}
 
 
+def test_chat_page_loads_socketio_client():
+    client = app.test_client()
+
+    response = client.get("/")
+
+    assert response.status_code == 200
+    page = response.get_data(as_text=True)
+    assert "https://cdn.socket.io/4.7.2/socket.io.min.js" in page
+    assert "autoConnect: false" in client.get("/static/chat.js").get_data(as_text=True)
+
+
 def test_direct_message_history_edit_delete_flow():
     client = app.test_client()
     alice = f"alice_{uuid.uuid4().hex[:8]}"
